@@ -17,9 +17,8 @@
             flex-direction: column;
         }
         #upper-half {
-            height: 75vh;
-            width: 75vw;
-            margin: 0 auto;
+            height: 50vh;
+            width: 100%;
             background-color: blue;
             position: relative;
             display: flex;
@@ -28,7 +27,8 @@
             overflow: hidden;
         }
         #lower-half {
-            height: 25vh;
+            height: 50vh;
+            position: relative;
             display: flex;
             justify-content: center;
             align-items: center;
@@ -47,41 +47,34 @@
             width: 50%;
             height: 50%;
         }
-        #captureRefBtn {
-            position: absolute;
-            bottom: 10px;
-            left: 50%;
-            transform: translateX(-50%);
-            padding: 10px;
-            font-size: 16px;
-            z-index: 10;
-        }
         @keyframes flash {
             0%, 100% { border-color: green; }
             50% { border-color: lime; }
         }
-        .high-confidence-match {
-            animation: flash 0.5s infinite;
+        .confidence-label {
+            position: absolute;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 2px 5px;
+            font-size: 12px;
         }
     </style>
 </head>
 <body>
     <div id="upper-half">
-        <video id="previewCamera" autoplay muted></video>
-        <div id="detectionRect"></div>
-        <button id="captureRefBtn">Capture Reference</button>
+        <canvas id="referenceCanvas"></canvas>
     </div>
     <div id="lower-half">
-        <canvas id="referenceCanvas"></canvas>
+        <video id="previewCamera" autoplay muted></video>
+        <div id="detectionRect"></div>
     </div>
 
     <script>
         const previewCamera = document.getElementById('previewCamera');
         const referenceCanvas = document.getElementById('referenceCanvas');
-        const captureRefBtn = document.getElementById('captureRefBtn');
-        const detectionRect = document.getElementById('detectionRect');
         const upperHalf = document.getElementById('upper-half');
         const lowerHalf = document.getElementById('lower-half');
+        const detectionRect = document.getElementById('detectionRect');
 
         let referenceData = null;
         const DETECTION_INTERVAL = 1000; // 1 second
@@ -108,13 +101,13 @@
 
         setupCamera(previewCamera);
 
-        captureRefBtn.addEventListener('click', () => {
-            // Crop the reference image to the blue rectangle (3/4 height and width)
+        // Tap on upper half to capture reference image
+        upperHalf.addEventListener('click', () => {
             referenceCanvas.width = upperHalf.offsetWidth;
             referenceCanvas.height = upperHalf.offsetHeight;
             const ctx = referenceCanvas.getContext('2d');
             
-            // Calculate the cropping region
+            // Crop the reference image to the full upper half
             const srcX = (previewCamera.videoWidth - referenceCanvas.width) / 2;
             const srcY = (previewCamera.videoHeight - referenceCanvas.height) / 2;
             
@@ -127,18 +120,17 @@
             );
             
             referenceData = ctx.getImageData(0, 0, referenceCanvas.width, referenceCanvas.height).data;
-            captureRefBtn.textContent = 'Recapture Reference';
         });
 
         function detectPiece() {
             if (!referenceData) return;
 
             const previewCanvas = document.createElement('canvas');
-            previewCanvas.width = upperHalf.offsetWidth;
-            previewCanvas.height = upperHalf.offsetHeight;
+            previewCanvas.width = lowerHalf.offsetWidth;
+            previewCanvas.height = lowerHalf.offsetHeight;
             const previewCtx = previewCanvas.getContext('2d');
             
-            // Crop the preview image to match the reference canvas
+            // Crop the preview image to match the lower half
             const srcX = (previewCamera.videoWidth - previewCanvas.width) / 2;
             const srcY = (previewCamera.videoHeight - previewCanvas.height) / 2;
             
@@ -208,16 +200,14 @@
             // Draw green flashing rectangle
             ctx.strokeStyle = 'green';
             ctx.lineWidth = 3;
-            const flashingRect = document.createElement('div');
-            flashingRect.classList.add('high-confidence-match');
             ctx.strokeRect(x, y, width, height);
 
-            // Confidence label
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            ctx.fillRect(x, y - 20, 70, 20);
+            // Confidence label inside the rectangle
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(x, y, 50, 20);
             ctx.fillStyle = 'white';
             ctx.font = '12px Arial';
-            ctx.fillText(`${(confidence * 100).toFixed(1)}%`, x + 5, y - 5);
+            ctx.fillText(`${(confidence * 100).toFixed(1)}%`, x + 5, y + 15);
         }
 
         setInterval(detectPiece, DETECTION_INTERVAL);
