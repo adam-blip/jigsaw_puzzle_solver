@@ -94,7 +94,6 @@
         </div>
         <div id="resultOverlay" style="display: none;"></div>
         <div class="button-group">
-            <button id="detectBtn">Detect Piece</button>
             <button id="toggleCamBtn">Toggle Camera</button>
         </div>
     </div>
@@ -105,44 +104,72 @@
         const referenceCanvas = document.getElementById('referenceCanvas');
         const resultCanvas = document.getElementById('resultCanvas');
         const captureRefBtn = document.getElementById('captureRefBtn');
-        const detectBtn = document.getElementById('detectBtn');
         const toggleCamBtn = document.getElementById('toggleCamBtn');
         const resultOverlay = document.getElementById('resultOverlay');
 
         let referenceData = null;
         let isProcessing = false;
+        let continuousDetection = false;
         const SCALE_FACTOR = 0.25;
+        const DETECTION_INTERVAL = 500; // ms
 
-        async function setupCamera(videoElement, facingMode = 'environment') {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: facingMode }
-            });
-            videoElement.srcObject = stream;
-            await new Promise(resolve => videoElement.onloadedmetadata = resolve);
-            videoElement.play();
+        async function setupCamera(videoElement, facingMode = 'environment', isReference = false) {
+            const constraints = {
+                video: {
+                    facingMode: facingMode,
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                }
+            };
+
+            if (isReference) {
+                constraints.video.width = { ideal: 3840 };
+                constraints.video.height = { ideal: 2160 };
+            }
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                videoElement.srcObject = stream;
+                await new Promise(resolve => videoElement.onloadedmetadata = resolve);
+                videoElement.play();
+
+                // Log actual resolution
+                const track = stream.getVideoTracks()[0];
+                const settings = track.getSettings();
+                console.log(`Actual resolution: ${settings.width}x${settings.height}`);
+            } catch (error) {
+                console.error('Camera setup error:', error);
+            }
         }
 
-        setupCamera(refCamera);
+        setupCamera(refCamera, 'environment', true);
         setupCamera(pieceCamera);
 
-        captureRefBtn.addEventListener('click', () => {
-            referenceCanvas.width = refCamera.videoWidth * SCALE_FACTOR;
-            referenceCanvas.height = refCamera.videoHeight * SCALE_FACTOR;
+        captureRefBtn.addEventListener('click', async () => {
+            await setupCamera(refCamera, 'environment', true);
+            referenceCanvas.width = refCamera.videoWidth;
+            referenceCanvas.height = refCamera.videoHeight;
             const ctx = referenceCanvas.getContext('2d');
             ctx.drawImage(refCamera, 0, 0, referenceCanvas.width, referenceCanvas.height);
             referenceData = ctx.getImageData(0, 0, referenceCanvas.width, referenceCanvas.height).data;
             refCamera.style.display = 'none';
             referenceCanvas.style.display = 'block';
-            captureRefBtn.style.display = 'none';
+            captureRefBtn.textContent = 'Recapture Reference';
+            continuousDetection = true;
+            detectPieceContinuously();
         });
-
-        detectBtn.addEventListener('click', detectPiece);
 
         toggleCamBtn.addEventListener('click', () => {
             const currentFacingMode = pieceCamera.srcObject.getVideoTracks()[0].getSettings().facingMode;
             const newFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
             setupCamera(pieceCamera, newFacingMode);
         });
+
+        async function detectPieceContinuously() {
+            if (!continuousDetection) return;
+            await detectPiece();
+            setTimeout(detectPieceContinuously, DETECTION_INTERVAL);
+        }
 
         async function detectPiece() {
             if (!referenceData || isProcessing) return;
