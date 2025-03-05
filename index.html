@@ -1,255 +1,332 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Puzzle Piece Detector</title>
-    <style>
-        body, html {
-            margin: 0;
-            padding: 0;
-            height: 100%;
-            font-family: Arial, sans-serif;
-            overflow: hidden;
-        }
-        body {
-            display: flex;
-            flex-direction: column;
-        }
-        #upper-half {
-            height: 50vh;
-            width: 100%;
-            background-color: blue; /* Placeholder blue color */
-            position: relative;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            overflow: hidden;
-        }
-        #lower-half {
-            height: 50vh;
-            position: relative;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-        video, canvas, #jigsawOutline { /* Added #jigsawOutline */
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-        }
-        #detectionRect {
-            position: absolute;
-            border: 2px solid red;
-            pointer-events: none;
-            top: 25%;
-            left: 25%;
-            width: 50%;
-            height: 50%;
-            /*display: none;  Hide default rectangle initially */
-        }
-        @keyframes flash {
-            0%, 100% { border-color: green; }
-            50% { border-color: lime; }
-        }
-        .confidence-label {
-            position: absolute;
-            background-color: rgba(0, 0, 0, 0.7);
-            color: white;
-            padding: 2px 5px;
-            font-size: 12px;
-        }
-        #reference-text { /* Style for the text */
-            color: rgba(128, 128, 128, 0.5); /* Transparent grey */
-            font-size: 1.5em;
-            text-align: center;
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            pointer-events: none; /* Make sure it doesn't interfere with clicks */
-        }
-        #jigsawOutline { /* Style for jigsaw outline */
-            position: absolute;
-            top: 25%;
-            left: 25%;
-            width: 50%;
-            height: 50%;
-            pointer-events: none;
-            /* background-color: rgba(255, 0, 0, 0.2);  For testing outline position */
-        }
-    </style>
+    <title>Puzzle Detector Pro</title>
+    <script src="https://docs.opencv.org/4.5.0/opencv.js"></script>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            overflow: hidden; 
+            font-family: Arial, sans-serif; 
+            background-color: #1a1a2e; 
+            color: #e0e0e0; 
+        }
+        .container { 
+            display: flex; 
+            flex-direction: column; 
+            height: 100vh; 
+        }
+        .half-section { 
+            position: relative; 
+            height: 50vh; 
+            overflow: hidden; 
+            background: #16213e; 
+            border: 2px solid #0f3460; 
+        }
+        .overlay-text { 
+            position: absolute; 
+            top: 50%; 
+            left: 50%; 
+            transform: translate(-50%, -50%); 
+            color: rgba(255, 255, 255, 0.7); 
+            font-size: 1.2em; 
+            z-index: 2; 
+            pointer-events: none; 
+        }
+        canvas { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            object-fit: cover; 
+        }
+        video { 
+            position: absolute; 
+            object-fit: cover; 
+            width: 100%; 
+            height: 100%; 
+        }
+        .detection-outline { 
+            position: absolute; 
+            width: 80%; 
+            height: 80%; 
+            top: 10%; 
+            left: 10%; 
+            opacity: 0.5; 
+            pointer-events: none; 
+        }
+        .worker-status { 
+            position: fixed; 
+            top: 10px; 
+            right: 10px; 
+            color: #0f0; 
+            font-family: monospace; 
+            background: rgba(0,0,0,0.5); 
+            padding: 5px; 
+            border-radius: 3px; 
+        }
+    </style>
 </head>
 <body>
-    <div id="upper-half">
-        <canvas id="referenceCanvas"></canvas>
-        <span id="reference-text">Tap to capture reference</span>     </div>
-    <div id="lower-half">
-        <video id="previewCamera" autoplay muted></video>
-        <div id="jigsawOutline">
-            <img id="jigsawOutlineImg" src="jigsaw_outline.svg" style="width: 100%; height: 100%; object-fit: contain; opacity: 0.7;">         </div>
-    </div>
+    <div class="container">
+        <div class="half-section" id="upperSection">
+            <video id="upperVideo"></video>
+            <canvas id="referenceCanvas"></canvas>
+            <canvas id="detectionOverlayCanvas"></canvas>
+            <div id="upperOverlay" class="overlay-text">Tap to capture reference puzzle piece</div>
+        </div>
+        <div class="half-section" id="lowerSection">
+            <video id="lowerVideo" style="display: none;"></video>
+            <canvas id="detectionCanvas"></canvas>
+            <svg class="detection-outline" viewBox="0 0 100 100">
+                <path d="M10,10 
+                         L40,10 
+                         C50,10 50,0 60,0 
+                         C70,0 70,10 80,10 
+                         L90,10 
+                         L90,40 
+                         C90,50 100,50 100,60 
+                         C100,70 90,70 90,80 
+                         L90,90 
+                         L60,90 
+                         C50,90 50,100 40,100 
+                         C30,100 30,90 20,90 
+                         L10,90 
+                         L10,60 
+                         C10,50 0,50 0,40 
+                         C0,30 10,30 10,20 
+                         Z" 
+                      fill="none" stroke="#fff" stroke-width="2"/>
+            </svg>
+        </div>
+    </div>
+    <div class="worker-status" id="workerStatus">Initializing...</div>
 
-    <script>
-        const previewCamera = document.getElementById('previewCamera');
-        const referenceCanvas = document.getElementById('referenceCanvas');
-        const upperHalf = document.getElementById('upper-half');
-        const lowerHalf = document.getElementById('lower-half');
-        const detectionRect = document.getElementById('detectionRect'); // We will likely remove this later
-        const referenceText = document.getElementById('reference-text'); // Text element
-        const jigsawOutline = document.getElementById('jigsawOutline'); // Jigsaw outline div
+    <script>
+        let referenceImage = null;
+        let processingFrame = false;
+        const DETECTION_THRESHOLD = 0.7;
+        let captureScale = 0.5; // Downsample to 50% for faster processing
+        let suspectedLocations = [];
+        let isDetecting = false;
 
-        let referenceData = null;
-        const DETECTION_INTERVAL = 1000; // 1 second
-        const CONFIDENCE_THRESHOLD = 0.8; // 80% confidence
+        // Improved Web Worker for more robust matching
+        const worker = new Worker(URL.createObjectURL(new Blob([`
+            function comparePixels(ref, det, tolerance = 30) {
+                return Math.abs(ref[0] - det[0]) < tolerance &&
+                       Math.abs(ref[1] - det[1]) < tolerance &&
+                       Math.abs(ref[2] - det[2]) < tolerance;
+            }
 
-        async function setupCamera(videoElement, facingMode = 'environment') {
-            const constraints = {
-                video: {
-                    facingMode: facingMode,
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 }
-                }
-            };
+            self.onmessage = (e) => {
+                const { refData, detData, width, height } = e.data;
+                const matchLocations = [];
+                
+                // Simplified sliding window approach
+                const windowSize = Math.sqrt(refData.length / 4);
+                
+                for(let y = 0; y < height - windowSize; y += 5) {
+                    for(let x = 0; x < width - windowSize; x += 5) {
+                        let matches = 0;
+                        let totalPixels = 0;
+                        
+                        for(let dy = 0; dy < windowSize; dy++) {
+                            for(let dx = 0; dx < windowSize; dx++) {
+                                const refIdx = (dy * windowSize + dx) * 4;
+                                const detIdx = ((y + dy) * width + (x + dx)) * 4;
+                                
+                                if(comparePixels(
+                                    [refData[refIdx], refData[refIdx+1], refData[refIdx+2]], 
+                                    [detData[detIdx], detData[detIdx+1], detData[detIdx+2]]
+                                )) {
+                                    matches++;
+                                }
+                                totalPixels++;
+                            }
+                        }
+                        
+                        const confidence = matches / totalPixels;
+                        if(confidence > 0.7) {
+                            matchLocations.push({ x, y, confidence });
+                        }
+                    }
+                }
+                
+                self.postMessage({ matchLocations });
+            };
+        `], {type: 'application/javascript'})));
 
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                videoElement.srcObject = stream;
-                await new Promise(resolve => videoElement.onloadedmetadata = resolve);
-                videoElement.play();
-            } catch (error) {
-                console.error('Camera setup error:', error);
-            }
-        }
+        // OpenCV initialization
+        cv['onRuntimeInitialized'] = async () => {
+            document.getElementById('workerStatus').textContent = 'OpenCV Ready';
+            await initCamera();
+        };
 
-        setupCamera(previewCamera);
+        // Camera management
+        async function initCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { 
+                        width: { ideal: 1280 }, 
+                        height: { ideal: 720 },
+                        frameRate: { ideal: 30 }
+                    }
+                });
+                const video = document.getElementById('upperVideo');
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    video.play();
+                    document.getElementById('workerStatus').textContent = 'Camera Ready';
+                };
+            } catch (error) {
+                console.error('Camera error:', error);
+                document.getElementById('workerStatus').textContent = 'Camera Access Denied';
+            }
+        }
 
-        // Tap on upper half to capture reference image
-        upperHalf.addEventListener('click', () => {
-            referenceCanvas.width = upperHalf.offsetWidth;
-            referenceCanvas.height = upperHalf.offsetHeight;
-            const ctx = referenceCanvas.getContext('2d');
+        // Reference capture
+        async function captureReference() {
+            // If already detecting, reset
+            if (isDetecting) {
+                resetDetection();
+                return;
+            }
 
-            const cropSize = Math.min(previewCamera.videoWidth, previewCamera.videoHeight) / 2; // Example: Half of the smaller dimension
-            const srcX = (previewCamera.videoWidth - cropSize) / 2;
-            const srcY = (previewCamera.videoHeight - cropSize) / 2;
-            const destWidth = referenceCanvas.width; // Use canvas width for display
-            const destHeight = referenceCanvas.height; // Use canvas height for display
+            const video = document.getElementById('upperVideo');
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth * captureScale;
+            canvas.height = video.videoHeight * captureScale;
+            
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            try {
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                referenceImage = imageData;
+                
+                // Visualize reference capture
+                const refCanvas = document.getElementById('referenceCanvas');
+                refCanvas.width = canvas.width;
+                refCanvas.height = canvas.height;
+                refCanvas.getContext('2d').putImageData(imageData, 0, 0);
+                
+                switchCameraToLower();
+            } catch (error) {
+                console.error('Capture error:', error);
+                document.getElementById('workerStatus').textContent = 'Capture Failed';
+            }
+        }
 
-            ctx.drawImage(
-                previewCamera,
-                srcX, srcY,
-                cropSize, cropSize, // Source crop dimensions (square)
-                0, 0,
-                destWidth, destHeight // Destination display dimensions (canvas size)
-            );
+        // Reset detection
+        function resetDetection() {
+            isDetecting = false;
+            suspectedLocations = [];
+            document.getElementById('upperOverlay').textContent = 'Tap to capture reference puzzle piece';
+            
+            // Stop lower video
+            const lowerVideo = document.getElementById('lowerVideo');
+            if (lowerVideo.srcObject) {
+                lowerVideo.srcObject.getTracks().forEach(track => track.stop());
+                lowerVideo.style.display = 'none';
+            }
 
-            referenceData = ctx.getImageData(0, 0, referenceCanvas.width, referenceCanvas.height).data;
-            referenceText.style.display = 'block'; // Keep text visible - maybe change text later
-            referenceText.textContent = "Tap to retake reference"; // Change text to indicate retake option
-        });
+            // Clear canvases
+            const refCanvas = document.getElementById('referenceCanvas');
+            const detectionOverlayCanvas = document.getElementById('detectionOverlayCanvas');
+            refCanvas.getContext('2d').clearRect(0, 0, refCanvas.width, refCanvas.height);
+            detectionOverlayCanvas.getContext('2d').clearRect(0, 0, detectionOverlayCanvas.width, detectionOverlayCanvas.height);
 
-        function detectPiece() {
-            if (!referenceData) return;
+            // Reinitialize camera
+            initCamera();
+        }
 
-            const previewCanvas = document.createElement('canvas');
-            previewCanvas.width = lowerHalf.offsetWidth;
-            previewCanvas.height = lowerHalf.offsetHeight;
-            const previewCtx = previewCanvas.getContext('2d');
+        // Detection loop
+        async function detectPieces() {
+            if(processingFrame || !referenceImage) return;
+            processingFrame = true;
+            
+            const video = document.getElementById('lowerVideo');
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth * captureScale;
+            canvas.height = video.videoHeight * captureScale;
+            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            const imageData = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+            
+            worker.postMessage({
+                refData: referenceImage.data,
+                detData: imageData.data,
+                width: canvas.width,
+                height: canvas.height
+            });
+            
+            processingFrame = false;
+            requestAnimationFrame(detectPieces);
+        }
 
-            // Crop the preview image to match the lower half
-            const srcX = (previewCamera.videoWidth - previewCanvas.width) / 2;
-            const srcY = (previewCamera.videoHeight - previewCanvas.height) / 2;
+        // Web Worker results handler
+        worker.onmessage = (e) => {
+            const { matchLocations } = e.data;
+            
+            if(matchLocations.length > 0) {
+                document.getElementById('workerStatus').textContent = 
+                    `Matches: ${matchLocations.length}`;
+                suspectedLocations = matchLocations;
+                highlightDetection(matchLocations);
+            }
+        };
 
-            previewCtx.drawImage(
-                previewCamera,
-                srcX, srcY,
-                previewCanvas.width, previewCanvas.height,
-                0, 0,
-                previewCanvas.width, previewCanvas.height
-            );
+        // Detection visualization
+        function highlightDetection(matches) {
+            const canvas = document.getElementById('detectionOverlayCanvas');
+            const refCanvas = document.getElementById('referenceCanvas');
+            
+            // Ensure canvases match
+            canvas.width = refCanvas.width;
+            canvas.height = refCanvas.height;
+            
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Redraw reference image first
+            ctx.drawImage(refCanvas, 0, 0);
+            
+            // Highlight suspected locations
+            ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
+            matches.forEach(match => {
+                const windowSize = Math.sqrt(referenceImage.data.length / 4);
+                ctx.fillRect(match.x, match.y, windowSize, windowSize);
+            });
+        }
 
-            const previewData = previewCtx.getImageData(0, 0, previewCanvas.width, previewCanvas.height).data;
+        // Camera switching
+        async function switchCameraToLower() {
+            const upperVideo = document.getElementById('upperVideo');
+            upperVideo.srcObject.getTracks().forEach(track => track.stop());
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "environment" }
+                });
+                const lowerVideo = document.getElementById('lowerVideo');
+                lowerVideo.style.display = 'block';
+                lowerVideo.srcObject = stream;
+                lowerVideo.onloadedmetadata = () => {
+                    lowerVideo.play();
+                    isDetecting = true;
+                    document.getElementById('upperOverlay').textContent = 'Tap again to renew';
+                    detectPieces();
+                };
+            } catch (error) {
+                console.error('Lower camera error:', error);
+                document.getElementById('workerStatus').textContent = 'Camera Switch Failed';
+            }
+        }
 
-            const rectWidth = previewCanvas.width / 2;
-            const rectHeight = previewCanvas.height / 2;
-            const rectX = previewCanvas.width / 4;
-            const rectY = previewCanvas.height / 4;
-
-            const bestMatch = findBestMatch(referenceData, previewData, referenceCanvas.width, referenceCanvas.height, rectX, rectY, rectWidth, rectHeight); // Note: Using referenceCanvas.width/height for findBestMatch now!
-
-            if (bestMatch.confidence > CONFIDENCE_THRESHOLD) {
-                markPieceOnReference(bestMatch.x, bestMatch.y, rectWidth, rectHeight, bestMatch.confidence);
-
-                // **NEW: Crop puzzle piece area and log ImageData**
-                const croppedPieceData = previewCtx.getImageData(bestMatch.x, bestMatch.y, rectWidth, rectHeight);
-                console.log("Cropped Puzzle Piece Data:", croppedPieceData); // Log to console for now
-                // In a future step, we would display this croppedPieceData on a new canvas in lower-half
-            }
-        }
-
-        function findBestMatch(refData, previewData, refWidth, refHeight, previewX, previewY, previewWidth, previewHeight) {
-            let bestMatch = { x: 0, y: 0, score: Infinity, confidence: 0 };
-
-            for (let y = 0; y < refHeight - previewHeight; y += 10) {
-                for (let x = 0; x < refWidth - previewWidth; x += 10) {
-                    let score = 0;
-                    for (let py = 0; py < previewHeight; py++) {
-                        for (let px = 0; px < previewWidth; px++) {
-                            const refIdx = ((y + py) * refWidth + (x + px)) * 4;
-                            const previewIdx = ((previewY + py) * refWidth + (previewX + px)) * 4;
-                            score += Math.abs(refData[refIdx] - previewData[previewIdx]) +
-                                     Math.abs(refData[refIdx + 1] - previewData[previewIdx + 1]) +
-                                     Math.abs(refData[refIdx + 2] - previewData[previewIdx + 2]);
-                        }
-                    }
-                    const confidence = 1 - (score / (previewWidth * previewHeight * 3 * 255));
-                    if (confidence > bestMatch.confidence) {
-                        bestMatch = { x, y, score, confidence };
-                    }
-                }
-            }
-
-            return bestMatch;
-        }
-
-        function markPieceOnReference(x, y, width, height, confidence) {
-            const ctx = referenceCanvas.getContext('2d');
-            ctx.clearRect(0, 0, referenceCanvas.width, referenceCanvas.height);
-
-            // Redraw reference image
-            const srcX = (previewCamera.videoWidth - referenceCanvas.width) / 2;
-            const srcY = (previewCamera.videoHeight - referenceCanvas.height) / 2;
-
-            ctx.drawImage(
-                previewCamera,
-                srcX, srcY,
-                referenceCanvas.width, referenceCanvas.height,
-                0, 0,
-                referenceCanvas.width, referenceCanvas.height
-            );
-
-            // Draw green flashing rectangle
-            ctx.strokeStyle = 'green';
-            ctx.lineWidth = 3;
-            ctx.strokeRect(x, y, width, height);
-
-            // Confidence label inside the rectangle
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-            ctx.fillRect(x, y, 50, 20);
-            ctx.fillStyle = 'white';
-            ctx.font = '12px Arial';
-            ctx.fillText(`${(confidence * 100).toFixed(1)}%`, x + 5, y + 15);
-        }
-
-        setInterval(detectPiece, DETECTION_INTERVAL);
-
-        // Prevent landscape mode
-        window.addEventListener('orientationchange', () => {
-            if (window.orientation !== 0) {
-                alert('Please use portrait mode');
-            }
-        });
-    </script>
+        // Event listeners
+        document.getElementById('upperSection').addEventListener('click', captureReference);
+    </script>
 </body>
 </html>
