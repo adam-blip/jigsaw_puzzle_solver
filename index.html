@@ -1,71 +1,69 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html>
 <head>
     <title>Puzzle Detector Pro</title>
     <script src="https://docs.opencv.org/4.5.0/opencv.js"></script>
     <style>
-        body { 
-            margin: 0; 
-            padding: 0; 
-            overflow: hidden; 
-            font-family: Arial, sans-serif; 
-            background-color: #1a1a2e; 
-            color: #e0e0e0; 
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            background-color: #1a1a2e;
+            color: #e0e0e0;
         }
-        .container { 
-            display: flex; 
-            flex-direction: column; 
-            height: 100vh; 
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
         }
-        .half-section { 
-            position: relative; 
-            height: 50vh; 
-            overflow: hidden; 
-            background: #16213e; 
-            border: 2px solid #0f3460; 
+        .half-section {
+            position: relative;
+            height: 50vh;
+            overflow: hidden;
+            background: #16213e;
+            border: 2px solid #0f3460;
         }
-        .overlay-text { 
-            position: absolute; 
-            top: 50%; 
-            left: 50%; 
-            transform: translate(-50%, -50%); 
-            color: rgba(255, 255, 255, 0.7); 
-            font-size: 1.2em; 
-            z-index: 2; 
-            pointer-events: none; 
+        .overlay-text {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 2em;
+            z-index: 2;
+            pointer-events: none;
+            text-align: center;
+            width: 100%;
+            padding: 10px 0;
+            background: rgba(0,0,0,0.5);
         }
-        canvas { 
-            position: absolute; 
-            top: 0; 
-            left: 0; 
-            width: 100%; 
-            height: 100%; 
-            object-fit: cover; 
+        canvas, video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
         }
-        video { 
-            position: absolute; 
-            object-fit: cover; 
-            width: 100%; 
-            height: 100%; 
+        .detection-outline {
+            position: absolute;
+            width: 80%;
+            height: 80%;
+            top: 10%;
+            left: 10%;
+            opacity: 0.5;
+            pointer-events: none;
         }
-        .detection-outline { 
-            position: absolute; 
-            width: 80%; 
-            height: 80%; 
-            top: 10%; 
-            left: 10%; 
-            opacity: 0.5; 
-            pointer-events: none; 
-        }
-        .worker-status { 
-            position: fixed; 
-            top: 10px; 
-            right: 10px; 
-            color: #0f0; 
-            font-family: monospace; 
-            background: rgba(0,0,0,0.5); 
-            padding: 5px; 
-            border-radius: 3px; 
+        .worker-status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            color: #0f0;
+            font-family: monospace;
+            background: rgba(0,0,0,0.5);
+            padding: 5px;
+            border-radius: 3px;
         }
     </style>
 </head>
@@ -74,30 +72,13 @@
         <div class="half-section" id="upperSection">
             <video id="upperVideo"></video>
             <canvas id="referenceCanvas"></canvas>
-            <canvas id="detectionOverlayCanvas"></canvas>
-            <div id="upperOverlay" class="overlay-text">Tap to capture reference puzzle piece</div>
+            <canvas id="detectionOverlayCanvas"></canvas> <canvas id="detectionOverlayCanvas" style="z-index:1;"></canvas>  <div id="upperOverlay" class="overlay-text">Tap to capture reference puzzle piece</div>
         </div>
         <div class="half-section" id="lowerSection">
-            <video id="lowerVideo" style="display: none;"></video>
+            <video id="lowerVideo"></video>
             <canvas id="detectionCanvas"></canvas>
-            <svg class="detection-outline" viewBox="0 0 100 100">
-                <path d="M10,10 
-                         L40,10 
-                         C50,10 50,0 60,0 
-                         C70,0 70,10 80,10 
-                         L90,10 
-                         L90,40 
-                         C90,50 100,50 100,60 
-                         C100,70 90,70 90,80 
-                         L90,90 
-                         L60,90 
-                         C50,90 50,100 40,100 
-                         C30,100 30,90 20,90 
-                         L10,90 
-                         L10,60 
-                         C10,50 0,50 0,40 
-                         C0,30 10,30 10,20 
-                         Z" 
+            <canvas id="detectionHighlightCanvas" style="z-index:1;"></canvas>  <svg class="detection-outline" viewBox="0 0 100 100">
+                <path d="M10,10 L40,10 C50,0 50,0 60,10 C70,20 70,20 80,10 L90,10 L90,40 C100,50 100,50 90,60 C80,70 80,70 90,80 L90,90 L60,90 C50,100 50,100 40,90 C30,80 30,80 20,90 L10,90 L10,60 C0,50 0,50 10,40 C20,30 20,30 10,20 Z"
                       fill="none" stroke="#fff" stroke-width="2"/>
             </svg>
         </div>
@@ -107,38 +88,56 @@
     <script>
         let referenceImage = null;
         let processingFrame = false;
-        const DETECTION_THRESHOLD = 0.7;
-        let captureScale = 0.5; // Downsample to 50% for faster processing
+        let DETECTION_THRESHOLD = 0.05; // Lower threshold to 5%
+        let captureScale = 1.0; // No scaling, full size
         let suspectedLocations = [];
         let isDetecting = false;
+        let currentStream = null;
+        let detectionInterval = null;
+        let referenceWindowSize = 0;
 
         // Improved Web Worker for more robust matching
         const worker = new Worker(URL.createObjectURL(new Blob([`
-            function comparePixels(ref, det, tolerance = 30) {
+            function comparePixels(ref, det, tolerance = 40) {
                 return Math.abs(ref[0] - det[0]) < tolerance &&
                        Math.abs(ref[1] - det[1]) < tolerance &&
                        Math.abs(ref[2] - det[2]) < tolerance;
             }
 
             self.onmessage = (e) => {
-                const { refData, detData, width, height } = e.data;
+                const { refData, detData, width, height, windowSize, detectionThreshold } = e.data;
                 const matchLocations = [];
-                
-                // Simplified sliding window approach
-                const windowSize = Math.sqrt(refData.length / 4);
-                
-                for(let y = 0; y < height - windowSize; y += 5) {
-                    for(let x = 0; x < width - windowSize; x += 5) {
+
+
+                console.log('[Worker] Processing frame:', {
+                    width: width,
+                    height: height,
+                    refDataLength: refData.length,
+                    detDataLength: detData.length,
+                    windowSize: windowSize,
+                    detectionThreshold: detectionThreshold
+                });
+                console.log('[Worker] Processing frame with window size:', windowSize);
+
+                if (windowSize >= width || windowSize >= height) {
+                    console.error('[Worker] windowSize is larger than or equal to frame dimensions. Aborting detection.');
+                    self.postMessage({ matchLocations: [] });
+                    return;
+                }
+
+
+                for(let y = 0; y < height - windowSize; y += 2) {
+                    for(let x = 0; x < width - windowSize; x += 2) {
                         let matches = 0;
                         let totalPixels = 0;
-                        
+
                         for(let dy = 0; dy < windowSize; dy++) {
                             for(let dx = 0; dx < windowSize; dx++) {
                                 const refIdx = (dy * windowSize + dx) * 4;
                                 const detIdx = ((y + dy) * width + (x + dx)) * 4;
-                                
+
                                 if(comparePixels(
-                                    [refData[refIdx], refData[refIdx+1], refData[refIdx+2]], 
+                                    [refData[refIdx], refData[refIdx+1], refData[refIdx+2]],
                                     [detData[detIdx], detData[detIdx+1], detData[detIdx+2]]
                                 )) {
                                     matches++;
@@ -146,14 +145,16 @@
                                 totalPixels++;
                             }
                         }
-                        
+
                         const confidence = matches / totalPixels;
-                        if(confidence > 0.7) {
+                        console.log(\`[Worker] Confidence at (\${x}, \${y}): \${confidence}\`);
+                        if(confidence > detectionThreshold) {
                             matchLocations.push({ x, y, confidence });
                         }
                     }
                 }
-                
+
+                console.log('[Worker] Match locations:', matchLocations);
                 self.postMessage({ matchLocations });
             };
         `], {type: 'application/javascript'})));
@@ -162,35 +163,50 @@
         cv['onRuntimeInitialized'] = async () => {
             document.getElementById('workerStatus').textContent = 'OpenCV Ready';
             await initCamera();
+            console.log('OpenCV runtime initialized');
         };
 
         // Camera management
-        async function initCamera() {
+        async function initCamera(frontFacing = false) {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+                console.log('Existing stream stopped');
+            }
+
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { 
-                        width: { ideal: 1280 }, 
+                    video: {
+                        width: { ideal: 1280 },
                         height: { ideal: 720 },
-                        frameRate: { ideal: 30 }
+                        frameRate: { ideal: 30 },
+                        facingMode: frontFacing ? "user" : "environment"
                     }
                 });
+                currentStream = stream;
+
                 const video = document.getElementById('upperVideo');
-                video.srcObject = stream;
-                video.onloadedmetadata = () => {
-                    video.play();
-                    document.getElementById('workerStatus').textContent = 'Camera Ready';
-                };
+                const lowerVideo = document.getElementById('lowerVideo');
+
+                video.srcObject = stream.clone();
+                lowerVideo.srcObject = stream;
+
+                video.onloadedmetadata = () => { video.play(); console.log('Upper video metadata loaded and playing'); };
+                lowerVideo.onloadedmetadata = () => { lowerVideo.play(); console.log('Lower video metadata loaded and playing'); };
+
+                document.getElementById('workerStatus').textContent = 'Camera Ready';
+                console.log('Camera initialized and ready');
             } catch (error) {
                 console.error('Camera error:', error);
                 document.getElementById('workerStatus').textContent = 'Camera Access Denied';
+                console.log('Camera access denied or error');
             }
         }
 
         // Reference capture
         async function captureReference() {
-            // If already detecting, reset
             if (isDetecting) {
                 resetDetection();
+                console.log('Detection reset triggered');
                 return;
             }
 
@@ -198,25 +214,57 @@
             const canvas = document.createElement('canvas');
             canvas.width = video.videoWidth * captureScale;
             canvas.height = video.videoHeight * captureScale;
-            
+
             const ctx = canvas.getContext('2d');
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
+
             try {
                 const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                 referenceImage = imageData;
-                
+                referenceWindowSize = Math.min(canvas.width, canvas.height) * 0.8; // MODIFIED: 80% of the smaller dimension
+
                 // Visualize reference capture
                 const refCanvas = document.getElementById('referenceCanvas');
                 refCanvas.width = canvas.width;
                 refCanvas.height = canvas.height;
                 refCanvas.getContext('2d').putImageData(imageData, 0, 0);
-                
-                switchCameraToLower();
+
+                console.log('Reference image captured:', {
+                    width: canvas.width,
+                    height: canvas.height,
+                    videoWidth: video.videoWidth,
+                    videoHeight: video.videoHeight,
+                    captureScale: captureScale,
+                    referenceImageDataLength: referenceImage.data.length,
+                    referenceWindowSize: referenceWindowSize
+                });
+
+                isDetecting = true;
+                document.getElementById('upperOverlay').textContent = 'Tap again to renew';
+
+                document.getElementById('workerStatus').textContent = 'Ready to Detect';
+                startDetection();
+                console.log('Detection mode started');
             } catch (error) {
                 console.error('Capture error:', error);
                 document.getElementById('workerStatus').textContent = 'Capture Failed';
+                console.log('Capture failed with error:', error);
             }
+        }
+
+        // Start detection process
+        function startDetection() {
+            if (!referenceImage) return;
+
+            const lowerVideo = document.getElementById('lowerVideo');
+            if (detectionInterval) {
+                clearInterval(detectionInterval);
+                console.log('Previous detection interval cleared');
+            }
+            detectionInterval = setInterval(() => {
+                detectPieces();
+            }, 300); // Reduced detection interval to 300ms
+            console.log('Detection interval started');
         }
 
         // Reset detection
@@ -224,109 +272,156 @@
             isDetecting = false;
             suspectedLocations = [];
             document.getElementById('upperOverlay').textContent = 'Tap to capture reference puzzle piece';
-            
-            // Stop lower video
-            const lowerVideo = document.getElementById('lowerVideo');
-            if (lowerVideo.srcObject) {
-                lowerVideo.srcObject.getTracks().forEach(track => track.stop());
-                lowerVideo.style.display = 'none';
-            }
 
-            // Clear canvases
             const refCanvas = document.getElementById('referenceCanvas');
             const detectionOverlayCanvas = document.getElementById('detectionOverlayCanvas');
+            const detectionHighlightCanvas = document.getElementById('detectionHighlightCanvas'); // NEW
             refCanvas.getContext('2d').clearRect(0, 0, refCanvas.width, refCanvas.height);
             detectionOverlayCanvas.getContext('2d').clearRect(0, 0, detectionOverlayCanvas.width, detectionOverlayCanvas.height);
+            detectionHighlightCanvas.getContext('2d').clearRect(0, 0, detectionHighlightCanvas.width, detectionHighlightCanvas.height); // NEW
 
-            // Reinitialize camera
+            console.log('Detection canvases cleared');
+
+            if (detectionInterval) {
+                clearInterval(detectionInterval);
+                detectionInterval = null;
+                console.log('Detection interval cleared');
+            }
+
             initCamera();
+            console.log('Camera re-initialized after reset');
         }
 
         // Detection loop
-        async function detectPieces() {
-            if(processingFrame || !referenceImage) return;
-            processingFrame = true;
-            
+        function detectPieces() {
+            if(!isDetecting || !referenceImage) {
+                console.log('Detection skipped: isDetecting=', isDetecting, 'referenceImage=', !!referenceImage);
+                return;
+            }
+
             const video = document.getElementById('lowerVideo');
             const canvas = document.createElement('canvas');
             canvas.width = video.videoWidth * captureScale;
             canvas.height = video.videoHeight * captureScale;
             canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-            
+
             const imageData = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
-            
+
+            console.log('Sending frame to worker for detection', {
+                width: canvas.width,
+                height: canvas.height,
+                videoWidth: video.videoWidth,
+                videoHeight: video.videoHeight,
+                captureScale: captureScale,
+                detectionImageDataLength: imageData.data.length,
+                windowSize: referenceWindowSize,
+                detectionThreshold: DETECTION_THRESHOLD
+            });
             worker.postMessage({
                 refData: referenceImage.data,
                 detData: imageData.data,
                 width: canvas.width,
-                height: canvas.height
+                height: canvas.height,
+                windowSize: referenceWindowSize,
+                detectionThreshold: DETECTION_THRESHOLD
             });
-            
-            processingFrame = false;
-            requestAnimationFrame(detectPieces);
         }
 
         // Web Worker results handler
         worker.onmessage = (e) => {
             const { matchLocations } = e.data;
-            
+
+            console.log('Received message from worker', {matchLocations});
+
             if(matchLocations.length > 0) {
-                document.getElementById('workerStatus').textContent = 
-                    `Matches: ${matchLocations.length}`;
-                suspectedLocations = matchLocations;
-                highlightDetection(matchLocations);
+                document.getElementById('workerStatus').textContent =
+                    `Matches found`;
+
+                let bestMatch = null;
+                let highestConfidence = 0;
+                for (const match of matchLocations) {
+                    if (match.confidence > highestConfidence) {
+                        highestConfidence = match.confidence;
+                        bestMatch = match;
+                    }
+                }
+
+                if (bestMatch) {
+                    highlightDetection([bestMatch]);
+                    console.log('Best match highlighted', { confidence: bestMatch.confidence, location: bestMatch });
+                } else {
+                    clearDetectionHighlight();
+                    console.log('No best match found (unexpected)');
+                }
+
+
+            } else {
+                document.getElementById('workerStatus').textContent = 'No Matches Found';
+                clearDetectionHighlight();
+                console.log('No matches found in this frame');
             }
         };
 
-        // Detection visualization
+        // Detection visualization - MODIFIED to highlight on detectionHighlightCanvas
         function highlightDetection(matches) {
-            const canvas = document.getElementById('detectionOverlayCanvas');
+            const highlightCanvas = document.getElementById('detectionHighlightCanvas'); // NEW: Detection highlight canvas
             const refCanvas = document.getElementById('referenceCanvas');
-            
-            // Ensure canvases match
-            canvas.width = refCanvas.width;
-            canvas.height = refCanvas.height;
-            
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            // Redraw reference image first
-            ctx.drawImage(refCanvas, 0, 0);
-            
-            // Highlight suspected locations
-            ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
-            matches.forEach(match => {
-                const windowSize = Math.sqrt(referenceImage.data.length / 4);
-                ctx.fillRect(match.x, match.y, windowSize, windowSize);
-            });
-        }
+            const detectionOverlayCanvas = document.getElementById('detectionOverlayCanvas'); // Keep for reference vis.
 
-        // Camera switching
-        async function switchCameraToLower() {
-            const upperVideo = document.getElementById('upperVideo');
-            upperVideo.srcObject.getTracks().forEach(track => track.stop());
-            
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: "environment" }
-                });
-                const lowerVideo = document.getElementById('lowerVideo');
-                lowerVideo.style.display = 'block';
-                lowerVideo.srcObject = stream;
-                lowerVideo.onloadedmetadata = () => {
-                    lowerVideo.play();
-                    isDetecting = true;
-                    document.getElementById('upperOverlay').textContent = 'Tap again to renew';
-                    detectPieces();
-                };
-            } catch (error) {
-                console.error('Lower camera error:', error);
-                document.getElementById('workerStatus').textContent = 'Camera Switch Failed';
+            // Ensure canvases match detection canvas size
+            highlightCanvas.width = refCanvas.width; // Use refCanvas dimensions for highlight canvas
+            highlightCanvas.height = refCanvas.height;
+
+            const highlightCtx = highlightCanvas.getContext('2d');
+            highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height); // Clear HIGHLIGHT canvas
+
+            detectionOverlayCanvas.width = refCanvas.width; // ensure reference overlay canvas is sized correctly
+            detectionOverlayCanvas.height = refCanvas.height;
+            const refOverlayCtx = detectionOverlayCanvas.getContext('2d');
+            refOverlayCtx.clearRect(0, 0, detectionOverlayCanvas.width, detectionOverlayCanvas.height); // Clear REFERENCE OVERLAY canvas
+
+            // Redraw reference image on the *reference* overlay
+            refOverlayCtx.drawImage(refCanvas, 0, 0);
+
+
+            if (matches && matches.length > 0) {
+                const bestMatch = matches[0];
+                const windowSize = referenceWindowSize;
+                highlightCtx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+                highlightCtx.fillRect(bestMatch.x, bestMatch.y, windowSize, windowSize);
+                console.log('Best detection highlighted on detectionHighlightCanvas', { confidence: bestMatch.confidence, location: bestMatch });
+            } else {
+                console.log('No matches to highlight on detectionHighlightCanvas');
             }
         }
 
+        function clearDetectionHighlight() {
+            const highlightCanvas = document.getElementById('detectionHighlightCanvas'); // NEW: Detection highlight canvas
+            const detectionOverlayCanvas = document.getElementById('detectionOverlayCanvas'); // Keep for reference vis.
+
+            const highlightCtx = highlightCanvas.getContext('2d');
+            highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height); // Clear HIGHLIGHT canvas
+
+            const refOverlayCtx = detectionOverlayCanvas.getContext('2d');
+            refOverlayCtx.clearRect(0, 0, detectionOverlayCanvas.width, detectionOverlayCanvas.height); // Clear REFERENCE OVERLAY canvas
+
+            console.log('Detection highlight cleared from detectionHighlightCanvas');
+        }
+
+
         // Event listeners
         document.getElementById('upperSection').addEventListener('click', captureReference);
+        console.log('Upper section click listener added');
+
+        // Initialize with back camera
+        document.addEventListener('DOMContentLoaded', () => {
+            if (cv && cv.onRuntimeInitialized) {
+                cv.onRuntimeInitialized();
+                console.log('DOMContentLoaded: OpenCV onRuntimeInitialized already set, calling it.');
+            } else {
+                console.log('DOMContentLoaded: OpenCV onRuntimeInitialized not yet set, waiting for it.');
+            }
+        });
     </script>
 </body>
 </html>
