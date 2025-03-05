@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Mobile Puzzle Solver</title>
+    <title>Puzzle Piece Detector</title>
     <style>
         body, html {
             margin: 0;
@@ -17,103 +17,56 @@
         }
         #upper-half, #lower-half {
             flex: 1;
-            max-height: 50vh;
             position: relative;
             overflow: hidden;
         }
         #upper-half {
             border-bottom: 2px solid #ccc;
         }
-        #referenceContainer, #pieceContainer {
+        canvas, video {
             width: 100%;
             height: 100%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background: #f0f0f0;
-        }
-        video, canvas {
-            max-width: 100%;
-            max-height: 100%;
             object-fit: contain;
         }
-        .button-group {
+        #captureRefBtn {
             position: absolute;
             bottom: 10px;
-            left: 0;
-            right: 0;
-            display: flex;
-            justify-content: space-around;
+            left: 50%;
+            transform: translateX(-50%);
             padding: 10px;
-        }
-        button {
-            padding: 12px;
             font-size: 16px;
-            border: none;
-            border-radius: 8px;
-            background: #007bff;
-            color: white;
-            touch-action: manipulation;
         }
-        #resultOverlay {
+        #detectionRect {
             position: absolute;
-            top: 10px;
-            left: 10px;
-            background: rgba(0,0,0,0.7);
-            color: white;
-            padding: 10px;
-            border-radius: 5px;
-            font-size: 14px;
-        }
-        @media (min-width: 768px) {
-            body {
-                flex-direction: row;
-            }
-            #upper-half, #lower-half {
-                max-height: none;
-                width: 50vw;
-            }
+            border: 2px solid red;
+            pointer-events: none;
+            top: 25%;
+            left: 25%;
+            width: 50%;
+            height: 50%;
         }
     </style>
 </head>
 <body>
     <div id="upper-half">
-        <div id="referenceContainer">
-            <video id="refCamera" autoplay muted></video>
-            <canvas id="referenceCanvas" style="display: none;"></canvas>
-        </div>
-        <div class="button-group">
-            <button id="captureRefBtn">Capture Reference</button>
-        </div>
+        <canvas id="referenceCanvas"></canvas>
+        <button id="captureRefBtn">Capture Reference</button>
     </div>
-
     <div id="lower-half">
-        <div id="pieceContainer">
-            <video id="pieceCamera" autoplay muted></video>
-            <canvas id="resultCanvas" style="display: none;"></canvas>
-        </div>
-        <div id="resultOverlay" style="display: none;"></div>
-        <div class="button-group">
-            <button id="toggleCamBtn">Toggle Camera</button>
-        </div>
+        <video id="pieceCamera" autoplay muted></video>
+        <div id="detectionRect"></div>
     </div>
 
     <script>
-        const refCamera = document.getElementById('refCamera');
-        const pieceCamera = document.getElementById('pieceCamera');
         const referenceCanvas = document.getElementById('referenceCanvas');
-        const resultCanvas = document.getElementById('resultCanvas');
+        const pieceCamera = document.getElementById('pieceCamera');
         const captureRefBtn = document.getElementById('captureRefBtn');
-        const toggleCamBtn = document.getElementById('toggleCamBtn');
-        const resultOverlay = document.getElementById('resultOverlay');
+        const detectionRect = document.getElementById('detectionRect');
 
         let referenceData = null;
-        let isProcessing = false;
-        let continuousDetection = false;
-        const SCALE_FACTOR = 0.25;
-        const DETECTION_INTERVAL = 500; // ms
+        const DETECTION_INTERVAL = 100; // ms
 
-        async function setupCamera(videoElement, facingMode = 'environment', isReference = false) {
+        async function setupCamera(videoElement, facingMode = 'environment') {
             const constraints = {
                 video: {
                     facingMode: facingMode,
@@ -122,160 +75,106 @@
                 }
             };
 
-            if (isReference) {
-                constraints.video.width = { ideal: 3840 };
-                constraints.video.height = { ideal: 2160 };
-            }
-
             try {
                 const stream = await navigator.mediaDevices.getUserMedia(constraints);
                 videoElement.srcObject = stream;
                 await new Promise(resolve => videoElement.onloadedmetadata = resolve);
                 videoElement.play();
-
-                // Log actual resolution
-                const track = stream.getVideoTracks()[0];
-                const settings = track.getSettings();
-                console.log(`Actual resolution: ${settings.width}x${settings.height}`);
             } catch (error) {
                 console.error('Camera setup error:', error);
             }
         }
 
-        setupCamera(refCamera, 'environment', true);
         setupCamera(pieceCamera);
 
-        captureRefBtn.addEventListener('click', async () => {
-            await setupCamera(refCamera, 'environment', true);
-            referenceCanvas.width = refCamera.videoWidth;
-            referenceCanvas.height = refCamera.videoHeight;
+        captureRefBtn.addEventListener('click', () => {
+            referenceCanvas.width = pieceCamera.videoWidth;
+            referenceCanvas.height = pieceCamera.videoHeight;
             const ctx = referenceCanvas.getContext('2d');
-            ctx.drawImage(refCamera, 0, 0, referenceCanvas.width, referenceCanvas.height);
+            ctx.drawImage(pieceCamera, 0, 0, referenceCanvas.width, referenceCanvas.height);
             referenceData = ctx.getImageData(0, 0, referenceCanvas.width, referenceCanvas.height).data;
-            refCamera.style.display = 'none';
-            referenceCanvas.style.display = 'block';
             captureRefBtn.textContent = 'Recapture Reference';
-            continuousDetection = true;
-            detectPieceContinuously();
         });
 
-        toggleCamBtn.addEventListener('click', () => {
-            const currentFacingMode = pieceCamera.srcObject.getVideoTracks()[0].getSettings().facingMode;
-            const newFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
-            setupCamera(pieceCamera, newFacingMode);
-        });
-
-        async function detectPieceContinuously() {
-            if (!continuousDetection) return;
-            await detectPiece();
-            setTimeout(detectPieceContinuously, DETECTION_INTERVAL);
-        }
-
-        async function detectPiece() {
-            if (!referenceData || isProcessing) return;
-            isProcessing = true;
+        function detectPiece() {
+            if (!referenceData) return;
 
             const pieceCanvas = document.createElement('canvas');
-            pieceCanvas.width = pieceCamera.videoWidth * SCALE_FACTOR;
-            pieceCanvas.height = pieceCamera.videoHeight * SCALE_FACTOR;
+            pieceCanvas.width = pieceCamera.videoWidth;
+            pieceCanvas.height = pieceCamera.videoHeight;
             const pieceCtx = pieceCanvas.getContext('2d');
             pieceCtx.drawImage(pieceCamera, 0, 0, pieceCanvas.width, pieceCanvas.height);
             const pieceData = pieceCtx.getImageData(0, 0, pieceCanvas.width, pieceCanvas.height).data;
 
-            let bestMatch = { x: 0, y: 0, angle: 0, score: Infinity };
-            const rotations = [0, 90, 180, 270];
+            const rectWidth = pieceCanvas.width / 2;
+            const rectHeight = pieceCanvas.height / 2;
+            const rectX = pieceCanvas.width / 4;
+            const rectY = pieceCanvas.height / 4;
 
-            for (const angle of rotations) {
-                const rotatedPiece = await rotateImage(pieceData, pieceCanvas.width, pieceCanvas.height, angle);
-                
-                for (let y = 0; y < referenceCanvas.height - rotatedPiece.height; y += 3) {
-                    for (let x = 0; x < referenceCanvas.width - rotatedPiece.width; x += 3) {
-                        const score = compareImages(referenceData, rotatedPiece.data, 
-                                                    referenceCanvas.width,
-                                                    x, y, rotatedPiece.width, rotatedPiece.height);
-                        
-                        if (score < bestMatch.score) {
-                            bestMatch = { x: x/SCALE_FACTOR, y: y/SCALE_FACTOR, angle, score };
-                        }
+            const isPieceDetected = detectPieceInRect(pieceData, pieceCanvas.width, rectX, rectY, rectWidth, rectHeight);
+            detectionRect.style.borderColor = isPieceDetected ? 'blue' : 'red';
+
+            if (isPieceDetected) {
+                const bestMatch = findBestMatch(referenceData, pieceData, referenceCanvas.width, referenceCanvas.height, rectX, rectY, rectWidth, rectHeight);
+                markPieceOnReference(bestMatch.x, bestMatch.y, rectWidth, rectHeight);
+            }
+        }
+
+        function detectPieceInRect(imageData, imageWidth, x, y, width, height) {
+            const threshold = 30;
+            let edgeCount = 0;
+
+            for (let py = y; py < y + height; py++) {
+                for (let px = x; px < x + width; px++) {
+                    const idx = (py * imageWidth + px) * 4;
+                    const r = imageData[idx];
+                    const g = imageData[idx + 1];
+                    const b = imageData[idx + 2];
+
+                    if (px > x && Math.abs(r - imageData[idx - 4]) + Math.abs(g - imageData[idx - 3]) + Math.abs(b - imageData[idx - 2]) > threshold) {
+                        edgeCount++;
+                    }
+                    if (py > y && Math.abs(r - imageData[idx - imageWidth * 4]) + Math.abs(g - imageData[idx - imageWidth * 4 + 1]) + Math.abs(b - imageData[idx - imageWidth * 4 + 2]) > threshold) {
+                        edgeCount++;
                     }
                 }
             }
 
-            const maxScore = 100 * pieceCanvas.width * pieceCanvas.height;
-            const confidence = Math.max(0, 100 - (bestMatch.score / maxScore * 100));
-
-            resultCanvas.width = referenceCanvas.width / SCALE_FACTOR;
-            resultCanvas.height = referenceCanvas.height / SCALE_FACTOR;
-            const resultCtx = resultCanvas.getContext('2d');
-            resultCtx.drawImage(referenceCanvas, 0, 0, resultCanvas.width, resultCanvas.height);
-            
-            resultCtx.strokeStyle = `hsl(${confidence * 1.2}, 100%, 50%)`;
-            resultCtx.lineWidth = 2;
-            resultCtx.strokeRect(bestMatch.x - 10, bestMatch.y - 10, 20, 20);
-
-            resultOverlay.innerHTML = `
-                Position: (${Math.round(bestMatch.x)}, ${Math.round(bestMatch.y)})<br>
-                Angle: ${bestMatch.angle}°<br>
-                Confidence: ${confidence.toFixed(1)}%
-            `;
-            resultOverlay.style.display = 'block';
-            resultCanvas.style.display = 'block';
-            pieceCamera.style.display = 'none';
-
-            isProcessing = false;
+            return edgeCount > (width + height) / 2;
         }
 
-        function compareImages(refData, pieceData, refWidth, x, y, pieceWidth, pieceHeight) {
-            let totalDiff = 0;
-            for (let py = 0; py < pieceHeight; py++) {
-                for (let px = 0; px < pieceWidth; px++) {
-                    const refIdx = ((y + py) * refWidth + (x + px)) * 4;
-                    const pieceIdx = (py * pieceWidth + px) * 4;
-                    
-                    const diff = Math.abs(refData[refIdx] - pieceData[pieceIdx]) +
-                                 Math.abs(refData[refIdx+1] - pieceData[pieceIdx+1]) +
-                                 Math.abs(refData[refIdx+2] - pieceData[pieceIdx+2]);
-                    totalDiff += diff;
+        function findBestMatch(refData, pieceData, refWidth, refHeight, pieceX, pieceY, pieceWidth, pieceHeight) {
+            let bestMatch = { x: 0, y: 0, score: Infinity };
+
+            for (let y = 0; y < refHeight - pieceHeight; y += 10) {
+                for (let x = 0; x < refWidth - pieceWidth; x += 10) {
+                    let score = 0;
+                    for (let py = 0; py < pieceHeight; py++) {
+                        for (let px = 0; px < pieceWidth; px++) {
+                            const refIdx = ((y + py) * refWidth + (x + px)) * 4;
+                            const pieceIdx = ((pieceY + py) * refWidth + (pieceX + px)) * 4;
+                            score += Math.abs(refData[refIdx] - pieceData[pieceIdx]) +
+                                     Math.abs(refData[refIdx + 1] - pieceData[pieceIdx + 1]) +
+                                     Math.abs(refData[refIdx + 2] - pieceData[pieceIdx + 2]);
+                        }
+                    }
+                    if (score < bestMatch.score) {
+                        bestMatch = { x, y, score };
+                    }
                 }
             }
-            return totalDiff;
+
+            return bestMatch;
         }
 
-        function rotateImage(data, width, height, degrees) {
-            return new Promise(resolve => {
-                const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d');
-                
-                if (degrees === 90 || degrees === 270) {
-                    canvas.width = height;
-                    canvas.height = width;
-                } else {
-                    canvas.width = width;
-                    canvas.height = height;
-                }
-                
-                ctx.translate(canvas.width/2, canvas.height/2);
-                ctx.rotate(degrees * Math.PI / 180);
-                ctx.drawImage(createImageFromData(data, width, height), -width/2, -height/2);
-                
-                resolve({
-                    data: ctx.getImageData(0, 0, canvas.width, canvas.height).data,
-                    width: canvas.width,
-                    height: canvas.height
-                });
-            });
+        function markPieceOnReference(x, y, width, height) {
+            const ctx = referenceCanvas.getContext('2d');
+            ctx.strokeStyle = 'green';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, width, height);
         }
 
-        function createImageFromData(data, width, height) {
-            const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
-            const imageData = ctx.createImageData(width, height);
-            imageData.data.set(data);
-            ctx.putImageData(imageData, 0, 0);
-            return canvas;
-        }
+        setInterval(detectPiece, DETECTION_INTERVAL);
     </script>
 </body>
 </html>
