@@ -45,23 +45,32 @@
             width: 50%;
             height: 50%;
         }
+        #confidenceLabel {
+            position: absolute;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            padding: 2px 5px;
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
     <div id="upper-half">
-        <canvas id="referenceCanvas"></canvas>
+        <video id="previewCamera" autoplay muted></video>
+        <div id="detectionRect"></div>
         <button id="captureRefBtn">Capture Reference</button>
     </div>
     <div id="lower-half">
-        <video id="pieceCamera" autoplay muted></video>
-        <div id="detectionRect"></div>
+        <canvas id="referenceCanvas"></canvas>
     </div>
 
     <script>
+        const previewCamera = document.getElementById('previewCamera');
         const referenceCanvas = document.getElementById('referenceCanvas');
-        const pieceCamera = document.getElementById('pieceCamera');
         const captureRefBtn = document.getElementById('captureRefBtn');
         const detectionRect = document.getElementById('detectionRect');
+        const upperHalf = document.getElementById('upper-half');
+        const lowerHalf = document.getElementById('lower-half');
 
         let referenceData = null;
         const DETECTION_INTERVAL = 100; // ms
@@ -85,81 +94,55 @@
             }
         }
 
-        setupCamera(pieceCamera);
+        setupCamera(previewCamera);
 
         captureRefBtn.addEventListener('click', () => {
-            referenceCanvas.width = pieceCamera.videoWidth;
-            referenceCanvas.height = pieceCamera.videoHeight;
+            referenceCanvas.width = previewCamera.videoWidth;
+            referenceCanvas.height = previewCamera.videoHeight;
             const ctx = referenceCanvas.getContext('2d');
-            ctx.drawImage(pieceCamera, 0, 0, referenceCanvas.width, referenceCanvas.height);
+            ctx.drawImage(previewCamera, 0, 0, referenceCanvas.width, referenceCanvas.height);
             referenceData = ctx.getImageData(0, 0, referenceCanvas.width, referenceCanvas.height).data;
             captureRefBtn.textContent = 'Recapture Reference';
+            lowerHalf.style.display = 'block';
         });
 
         function detectPiece() {
             if (!referenceData) return;
 
-            const pieceCanvas = document.createElement('canvas');
-            pieceCanvas.width = pieceCamera.videoWidth;
-            pieceCanvas.height = pieceCamera.videoHeight;
-            const pieceCtx = pieceCanvas.getContext('2d');
-            pieceCtx.drawImage(pieceCamera, 0, 0, pieceCanvas.width, pieceCanvas.height);
-            const pieceData = pieceCtx.getImageData(0, 0, pieceCanvas.width, pieceCanvas.height).data;
+            const previewCanvas = document.createElement('canvas');
+            previewCanvas.width = previewCamera.videoWidth;
+            previewCanvas.height = previewCamera.videoHeight;
+            const previewCtx = previewCanvas.getContext('2d');
+            previewCtx.drawImage(previewCamera, 0, 0, previewCanvas.width, previewCanvas.height);
+            const previewData = previewCtx.getImageData(0, 0, previewCanvas.width, previewCanvas.height).data;
 
-            const rectWidth = pieceCanvas.width / 2;
-            const rectHeight = pieceCanvas.height / 2;
-            const rectX = pieceCanvas.width / 4;
-            const rectY = pieceCanvas.height / 4;
+            const rectWidth = previewCanvas.width / 2;
+            const rectHeight = previewCanvas.height / 2;
+            const rectX = previewCanvas.width / 4;
+            const rectY = previewCanvas.height / 4;
 
-            const isPieceDetected = detectPieceInRect(pieceData, pieceCanvas.width, rectX, rectY, rectWidth, rectHeight);
-            detectionRect.style.borderColor = isPieceDetected ? 'blue' : 'red';
-
-            if (isPieceDetected) {
-                const bestMatch = findBestMatch(referenceData, pieceData, referenceCanvas.width, referenceCanvas.height, rectX, rectY, rectWidth, rectHeight);
-                markPieceOnReference(bestMatch.x, bestMatch.y, rectWidth, rectHeight);
-            }
+            const bestMatch = findBestMatch(referenceData, previewData, referenceCanvas.width, referenceCanvas.height, rectX, rectY, rectWidth, rectHeight);
+            markPieceOnReference(bestMatch.x, bestMatch.y, rectWidth, rectHeight, bestMatch.confidence);
         }
 
-        function detectPieceInRect(imageData, imageWidth, x, y, width, height) {
-            const threshold = 30;
-            let edgeCount = 0;
+        function findBestMatch(refData, previewData, refWidth, refHeight, previewX, previewY, previewWidth, previewHeight) {
+            let bestMatch = { x: 0, y: 0, score: Infinity, confidence: 0 };
 
-            for (let py = y; py < y + height; py++) {
-                for (let px = x; px < x + width; px++) {
-                    const idx = (py * imageWidth + px) * 4;
-                    const r = imageData[idx];
-                    const g = imageData[idx + 1];
-                    const b = imageData[idx + 2];
-
-                    if (px > x && Math.abs(r - imageData[idx - 4]) + Math.abs(g - imageData[idx - 3]) + Math.abs(b - imageData[idx - 2]) > threshold) {
-                        edgeCount++;
-                    }
-                    if (py > y && Math.abs(r - imageData[idx - imageWidth * 4]) + Math.abs(g - imageData[idx - imageWidth * 4 + 1]) + Math.abs(b - imageData[idx - imageWidth * 4 + 2]) > threshold) {
-                        edgeCount++;
-                    }
-                }
-            }
-
-            return edgeCount > (width + height) / 2;
-        }
-
-        function findBestMatch(refData, pieceData, refWidth, refHeight, pieceX, pieceY, pieceWidth, pieceHeight) {
-            let bestMatch = { x: 0, y: 0, score: Infinity };
-
-            for (let y = 0; y < refHeight - pieceHeight; y += 10) {
-                for (let x = 0; x < refWidth - pieceWidth; x += 10) {
+            for (let y = 0; y < refHeight - previewHeight; y += 10) {
+                for (let x = 0; x < refWidth - previewWidth; x += 10) {
                     let score = 0;
-                    for (let py = 0; py < pieceHeight; py++) {
-                        for (let px = 0; px < pieceWidth; px++) {
+                    for (let py = 0; py < previewHeight; py++) {
+                        for (let px = 0; px < previewWidth; px++) {
                             const refIdx = ((y + py) * refWidth + (x + px)) * 4;
-                            const pieceIdx = ((pieceY + py) * refWidth + (pieceX + px)) * 4;
-                            score += Math.abs(refData[refIdx] - pieceData[pieceIdx]) +
-                                     Math.abs(refData[refIdx + 1] - pieceData[pieceIdx + 1]) +
-                                     Math.abs(refData[refIdx + 2] - pieceData[pieceIdx + 2]);
+                            const previewIdx = ((previewY + py) * refWidth + (previewX + px)) * 4;
+                            score += Math.abs(refData[refIdx] - previewData[previewIdx]) +
+                                     Math.abs(refData[refIdx + 1] - previewData[previewIdx + 1]) +
+                                     Math.abs(refData[refIdx + 2] - previewData[previewIdx + 2]);
                         }
                     }
-                    if (score < bestMatch.score) {
-                        bestMatch = { x, y, score };
+                    const confidence = 1 - (score / (previewWidth * previewHeight * 3 * 255));
+                    if (confidence > bestMatch.confidence) {
+                        bestMatch = { x, y, score, confidence };
                     }
                 }
             }
@@ -167,11 +150,20 @@
             return bestMatch;
         }
 
-        function markPieceOnReference(x, y, width, height) {
+        function markPieceOnReference(x, y, width, height, confidence) {
             const ctx = referenceCanvas.getContext('2d');
+            ctx.clearRect(0, 0, referenceCanvas.width, referenceCanvas.height);
+            ctx.drawImage(previewCamera, 0, 0, referenceCanvas.width, referenceCanvas.height);
+            
             ctx.strokeStyle = 'green';
             ctx.lineWidth = 2;
             ctx.strokeRect(x, y, width, height);
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(x, y - 20, 70, 20);
+            ctx.fillStyle = 'white';
+            ctx.font = '12px Arial';
+            ctx.fillText(`${(confidence * 100).toFixed(1)}%`, x + 5, y - 5);
         }
 
         setInterval(detectPiece, DETECTION_INTERVAL);
