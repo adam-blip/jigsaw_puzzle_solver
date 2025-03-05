@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Jigsaw Puzzle Solver</title>
+    <style>
+        .container { display: flex; gap: 20px; }
+        canvas { border: 2px solid #333; }
+        video { transform: scaleX(-1); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <canvas id="referenceCanvas" width="800" height="600"></canvas>
+        <video id="preview" width="400" height="300" autoplay></video>
+        <canvas id="resultCanvas" width="800" height="600"></canvas>
+    </div>
+    <button onclick="captureReference()">Capture Reference Puzzle</button>
+    <button onclick="detectPiece()">Detect Piece Position</button>
+
+    <script>
+        let video = document.getElementById('preview');
+        let referenceCtx = document.getElementById('referenceCanvas').getContext('2d');
+        let resultCtx = document.getElementById('resultCanvas').getContext('2d');
+        let referenceData = null;
+        let isProcessing = false;
+        const SCALE_FACTOR = 0.25; // Reduce resolution for faster processing
+
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+            .then(stream => video.srcObject = stream)
+            .catch(console.error);
+
+        function captureReference() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 800 * SCALE_FACTOR;
+            canvas.height = 600 * SCALE_FACTOR;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            referenceData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            referenceCtx.drawImage(canvas, 0, 0, 800, 600);
+        }
+
+        async function detectPiece() {
+            if (!referenceData || isProcessing) return;
+            isProcessing = true;
+
+            // Capture and prepare piece image
+            const pieceCanvas = document.createElement('canvas');
+            pieceCanvas.width = 400 * SCALE_FACTOR;
+            pieceCanvas.height = 300 * SCALE_FACTOR;
+            const pieceCtx = pieceCanvas.getContext('2d');
+            pieceCtx.drawImage(video, 0, 0, pieceCanvas.width, pieceCanvas.height);
+            const pieceData = pieceCtx.getImageData(0, 0, pieceCanvas.width, pieceCanvas.height).data;
+
+            let bestMatch = { x: 0, y: 0, angle: 0, score: Infinity };
+            const rotations = [0, 90, 180, 270]; // Limited rotations for performance
+
+            // Check all possible rotations
+            for (const angle of rotations) {
+                const rotatedPiece = await rotateImage(pieceData, pieceCanvas.width, pieceCanvas.height, angle);
+                
+                // Scan through reference image
+                for (let y = 0; y < referenceCtx.canvas.height * SCALE_FACTOR - rotatedPiece.height; y += 3) {
+                    for (let x = 0; x < referenceCtx.canvas.width * SCALE_FACTOR - rotatedPiece.width; x += 3) {
+                        const score = compareImages(referenceData, rotatedPiece.data, 
+                                                    referenceCtx.canvas.width * SCALE_FACTOR,
+                                                    x, y, rotatedPiece.width, rotatedPiece.height);
+                        
+                        if (score < bestMatch.score) {
+                            bestMatch = { x: x/SCALE_FACTOR, y: y/SCALE_FACTOR, angle, score };
+                        }
+                    }
+                }
+            }
+
+            // Calculate confidence (inverse of score normalized to 0-100)
+            const maxScore = 100 * rotatedPiece.width * rotatedPiece.height;
+            const confidence = Math.max(0, 100 - (bestMatch.score / maxScore * 100));
+
+            // Draw results
+            resultCtx.clearRect(0, 0, 800, 600);
+            resultCtx.drawImage(referenceCtx.canvas, 0, 0);
+            
+            resultCtx.strokeStyle = `hsl(${confidence * 1.2}, 100%, 50%)`;
+            resultCtx.lineWidth = 2;
+            resultCtx.strokeRect(bestMatch.x - 10, bestMatch.y - 10, 20, 20);
+            
+            resultCtx.fillStyle = '#fff';
+            resultCtx.font = '16px Arial';
+            resultCtx.fillText(`Pos: (${Math.round(bestMatch.x)}, ${Math.round(bestMatch.y)})`, 10, 30);
+            resultCtx.fillText(`Angle: ${bestMatch.angle}°`, 10, 50);
+            resultCtx.fillText(`Confidence: ${confidence.toFixed(1)}%`, 10, 70);
+
+            isProcessing = false;
+        }
+
+        function compareImages(refData, pieceData, refWidth, x, y, pieceWidth, pieceHeight) {
+            let totalDiff = 0;
+            for (let py = 0; py < pieceHeight; py++) {
+                for (let px = 0; px < pieceWidth; px++) {
+                    const refIdx = ((y + py) * refWidth + (x + px)) * 4;
+                    const pieceIdx = (py * pieceWidth + px) * 4;
+                    
+                    // Simple RGB difference comparison
+                    const diff = Math.abs(refData[refIdx] - pieceData[pieceIdx]) +
+                                 Math.abs(refData[refIdx+1] - pieceData[pieceIdx+1]) +
+                                 Math.abs(refData[refIdx+2] - pieceData[pieceIdx+2]);
+                    totalDiff += diff;
+                }
+            }
+            return totalDiff;
+        }
+
+        function rotateImage(data, width, height, degrees) {
+            return new Promise(resolve => {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                
+                // Rotate canvas
+                if (degrees === 90 || degrees === 270) {
+                    canvas.width = height;
+                    canvas.height = width;
+                } else {
+                    canvas.width = width;
+                    canvas.height = height;
+                }
+                
+                ctx.translate(canvas.width/2, canvas.height/2);
+                ctx.rotate(degrees * Math.PI / 180);
+                ctx.drawImage(createImage(data, width, height), -width/2, -height/2);
+                
+                resolve({
+                    data: ctx.getImageData(0, 0, canvas.width, canvas.height).data,
+                    width: canvas.width,
+                    height: canvas.height
+                });
+            });
+        }
+
+        function createImage(data, width, height) {
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(width, height);
+            imageData.data.set(data);
+            ctx.putImageData(imageData, 0, 0);
+            return canvas;
+        }
+    </script>
+</body>
+</html>
