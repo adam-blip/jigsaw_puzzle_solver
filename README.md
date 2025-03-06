@@ -1,4 +1,6 @@
-# Puzzle Detector Pro
+# Jigsaw Puzzle Solver
+
+![Logo]([https://via.placeholder.com/800x400?text=Puzzle+Detector+Pro](https://github.com/adam-blip/jigsaw_puzzle_solver/blob/main/logo.png?raw=true))
 
 An advanced web-based application that uses computer vision to help find where puzzle pieces fit in complex puzzles with 500+ pieces.
 
