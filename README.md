@@ -135,8 +135,42 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Pinch-to-zoom for examining the reference image
 - Local storage for saving reference images between sessions
 
-## 📞 Contact
+## AI Chatbot Prompt for Creation
 
+Create a web-based puzzle piece detector application that uses computer vision to help users find where a specific puzzle piece belongs in a completed puzzle image. The app should:
+
+1. Capture two video streams from the device camera:
+   - Top view: For capturing the reference (completed puzzle)
+   - Bottom view: For capturing individual puzzle pieces
+
+2. Use OpenCV.js for image processing with these key features:
+   - Template matching to find pieces in the reference image
+   - Multi-scale detection to handle different piece sizes
+   - Rotation handling (0°, 90°, 180°, 270° + finer angles)
+   - Performance optimization (frame skipping, ROI tracking)
+   - Adaptive confidence thresholds (0.45 for detection, 0.60 for matching)
+
+3. UI requirements:
+   - Split-screen layout with reference image on top, piece detector on bottom
+   - Visual indicators showing match location with confidence percentage
+   - Green outline for detected pieces with rotation visualization
+   - Performance stats (processing time and FPS)
+   - Simple tap controls to capture reference and reset application
+
+4. Technical optimizations:
+   - Pre-process reference image once instead of every frame
+   - Use cached OpenCV matrices to prevent memory allocation overhead
+   - Implement adaptive rotation/scale search based on previous matches
+   - Skip frames for better performance (process every Nth frame)
+   - Use region-of-interest tracking to focus processing on likely areas
+
+5. Mobile-friendly features:
+   - Responsive layout that works on mobile devices
+   - Camera access using getUserMedia with environment-facing camera
+   - Touch controls for capturing images and resetting the app
+   - Minimal UI with clear visual feedback
+
+Use HTML5, CSS3, and vanilla JavaScript. The entire application should be self-contained in a single HTML file that loads OpenCV.js from a CDN.
 If you have any questions or suggestions, please open an issue in this repository.
 
 ---
