@@ -1,21 +1,29 @@
 # Puzzle Detector Pro
 
-A web-based application that uses computer vision to help find where puzzle pieces fit in the completed puzzle image.
-
-![Puzzle Detector Pro Screenshot](https://via.placeholder.com/800x400?text=Puzzle+Detector+Pro)
+An advanced web-based application that uses computer vision to help find where puzzle pieces fit in complex puzzles with 500+ pieces.
 
 ## 🧩 Overview
 
-Puzzle Detector Pro is a standalone web application that uses your device's camera to detect where individual puzzle pieces belong in a completed puzzle. It employs template matching algorithms through OpenCV.js to identify the exact location of puzzle pieces in real-time.
+Puzzle Detector Pro is a sophisticated puzzle-solving assistant that uses your device's camera to detect where individual puzzle pieces belong in a completed puzzle. Using advanced computer vision algorithms through OpenCV.js, it features high-resolution image capture with optimized detection for both simple and complex puzzles.
 
 ## ✨ Features
 
+### Core Features
+- **High-Resolution Photo Capture**: Takes full-resolution photos instead of video frames for reference images
+- **Multi-Scale Detection**: Works with puzzles of various sizes, from simple to 500+ pieces
 - **Dual Camera View**: Capture the reference puzzle image in the upper view and detect individual pieces in the lower view
-- **Real-time Processing**: Instant feedback on where pieces belong
-- **Visual Feedback**: Highlights matched areas with confidence percentages
-- **Multi-scale Detection**: Works with different sized puzzle pieces through scale-invariant matching
+- **Portrait Mode Enforcement**: Automatically detects device orientation and prompts for portrait mode
 - **Mobile-Friendly**: Optimized for use on smartphones and tablets
 - **No Server Required**: Runs entirely in the browser with no data sent to any server
+
+### Advanced Detection Technology
+- **Multi-Resolution Image Pyramid**: Uses 4 levels of resolution for efficient detection
+- **Two-Stage Detection Process**: Quick coarse matching followed by precise refinement
+- **Adaptive Scale Increments**: Uses finer increments (0.05) for small pieces in 500+ piece puzzles
+- **Region of Interest (ROI) Optimization**: Focuses detailed detection in promising areas only
+- **Multiple Matching Algorithms**: Combines different OpenCV matching methods for better results
+- **Histogram Equalization**: Improves detection under varying lighting conditions
+- **Smart Resource Management**: Caches processed images for better performance
 
 ## 🚀 Getting Started
 
@@ -51,9 +59,10 @@ Puzzle Detector Pro is a standalone web application that uses your device's came
 
 ## 📱 How to Use
 
-1. **Capture Reference Image**:
-   - Place your completed puzzle (or box image) in view of the camera
-   - Tap the upper section to capture the reference image
+1. **Capture High-Resolution Reference Image**:
+   - Place your completed puzzle in view of the camera
+   - Tap the upper section to capture a high-resolution photo
+   - The app will automatically process the image for optimal detection
 
 2. **Detect Puzzle Pieces**:
    - Once the reference is captured, the lower section activates
@@ -66,19 +75,42 @@ Puzzle Detector Pro is a standalone web application that uses your device's came
 
 ## 🔧 Technical Details
 
-- **OpenCV.js**: Used for computer vision and template matching algorithms
-- **JavaScript ES6**: Core application logic
-- **HTML5 Canvas**: Real-time image processing and visualization
-- **MediaDevices API**: Camera access and video streams
+### Performance Optimizations
 
-### Algorithm Overview
+- **Multi-Resolution Approach**:
+  - Uses an image pyramid with 4 resolution levels
+  - Initial matching at lowest resolution for maximum speed
+  - Refines matches at higher resolutions for accuracy
 
-The application uses the following techniques:
-- Grayscale conversion for better pattern matching
-- Gaussian blur to reduce noise
-- Template matching with normalized cross-correlation (TM_CCOEFF_NORMED)
-- Multi-scale detection to account for different sized puzzle pieces
-- SVG path parsing for visualizing the puzzle piece outline
+- **Adaptive Scale Detection**:
+  - Uses coarse scale increments for initial matching [0.5, 1.0, 1.5]
+  - Automatically switches to finer increments (0.05) for small pieces
+  - Full scale range from 0.25 to 1.75 to detect pieces of all sizes
+
+- **Reference Image Caching**:
+  - Pre-processes and caches grayscale, blurred, and equalized versions of the reference image
+  - Creates and stores an image pyramid to avoid repeated downsampling
+  - Properly manages OpenCV resources to prevent memory leaks
+
+- **Region of Interest (ROI) Optimization**:
+  - After finding a coarse match, only searches within a region around it
+  - Dramatically reduces the search area for refined matching
+
+### Computer Vision Techniques
+
+- **Multiple Template Matching Methods**:
+  - Uses both `cv.TM_CCOEFF_NORMED` and `cv.TM_CCORR_NORMED` matching methods
+  - Each method excels at detecting different types of puzzle pieces
+  - Dynamically adjusts confidence thresholds based on the method used
+
+- **Image Enhancement**:
+  - Applies histogram equalization to both reference and template images
+  - Helps with varying lighting conditions and improves matching quality
+  - Gaussian blur reduces noise for more reliable matching
+
+- **Efficient Processing**:
+  - Uses `cv.INTER_NEAREST` for faster initial resizing
+  - Intelligent memory management for better performance
 
 ## 🤝 Contributing
 
@@ -96,11 +128,11 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## 🔮 Future Enhancements
 
-- Edge detection for better puzzle piece recognition
-- Support for saving reference images between sessions
-- Custom SVG outlines for different puzzle piece shapes
-- Improved performance optimizations for lower-end devices
 - Puzzle piece rotation detection
+- Machine learning integration for improved detection
+- Background worker implementation for smoother UI
+- Pinch-to-zoom for examining the reference image
+- Local storage for saving reference images between sessions
 
 ## 📞 Contact
 
