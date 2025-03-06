@@ -14,6 +14,7 @@
         .match-outline { position: absolute; border: 3px solid lime; pointer-events: none; display: none; z-index: 10; box-shadow: 0 0 15px rgba(0,255,0,0.7); }
         .match-overlay { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.7); color: white; padding: 10px; border-radius: 5px; max-width: 90%; text-align: center; z-index: 10; display: none; }
         #lowerSection { display: none; } /* Hide lower section by default */
+        #processingIndicator { position: fixed; top: 40px; right: 10px; color: #ff0; font-family: monospace; background: rgba(0,0,0,0.5); padding: 5px; border-radius: 3px; display: none; }
     </style>
 </head>
 <body>
@@ -35,31 +36,83 @@
     </div>
     <div class="worker-status" id="workerStatus">Initializing...</div>
     <div class="match-overlay" id="matchOverlay"></div>
+    <div id="processingIndicator">Processing...</div>
 </body>
 <script>
+    // Performance-optimized variables
     let referenceImage = null;
     let puzzlePieceTemplate = null;
     let isDetecting = false;
     let isProcessing = false;
-    const DETECTION_THRESHOLD = 0.45; // Higher threshold for better accuracy
-    const WINDOW_SIZE = 100;
+    let processingTime = 0;
+    let frameCount = 0;
+    let lastFrameTime = 0;
+    const DETECTION_THRESHOLD = 0.45;
+    const MATCH_CONFIDENCE_THRESHOLD = 0.60;
+    const HIGH_CONFIDENCE_THRESHOLD = 0.75;
+    const FRAME_SKIP = 2; // Process only every Nth frame
+    let skipCounter = 0;
     let referenceWidth = 0;
     let referenceHeight = 0;
-
+    
+    // Cached OpenCV objects to prevent reallocation
+    let cachedRefMat = null;
+    let cachedRefGray = null;
+    let cachedBlurredRef = null;
+    
+    // Adaptive rotation strategy
+    let rotationMode = 'coarse';
+    let lastConfidence = 0;
+    let lastMatchRegion = null;
+    let stableMatchCount = 0;
+    
+    // Optimization flags
+    const useROI = true; // Use region of interest for focused processing
+    let roi = null; // Will store the current region of interest
+    
     // Utility Functions
     const log = (msg, type = 'info') => {
         console[type](`[${type.toUpperCase()}] ${msg}`);
         document.getElementById('workerStatus').textContent = msg;
     };
-
-    // Camera Setup
+    
+    // Performance monitoring
+    function updatePerformanceStats(startTime) {
+        const endTime = performance.now();
+        processingTime += (endTime - startTime);
+        frameCount++;
+        
+        if (frameCount % 10 === 0) {
+            const avgProcessingTime = processingTime / frameCount;
+            const fps = 1000 / avgProcessingTime;
+            document.getElementById('processingIndicator').textContent = 
+                `Avg: ${avgProcessingTime.toFixed(1)}ms | FPS: ${fps.toFixed(1)}`;
+            document.getElementById('processingIndicator').style.display = 'block';
+        }
+    }
+    
+    // Camera Setup - Optimized for higher quality
     function initializeApplication() {
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+        // Request the highest possible resolution the device can handle
+        const constraints = {
+            video: {
+                facingMode: 'environment',
+                width: { ideal: 1920 },
+                height: { ideal: 1080 }
+            }
+        };
+        
+        navigator.mediaDevices.getUserMedia(constraints)
             .then(stream => {
                 const upperVideo = document.getElementById('upperVideo');
                 const lowerVideo = document.getElementById('lowerVideo');
                 upperVideo.srcObject = lowerVideo.srcObject = stream;
-
+                
+                // Get actual stream settings
+                const videoTrack = stream.getVideoTracks()[0];
+                const capabilities = videoTrack.getCapabilities();
+                log(`Camera: ${capabilities.width.max}x${capabilities.height.max}`);
+                
                 upperVideo.onloadedmetadata = () => {
                     upperVideo.play();
                     log('Upper video stream ready');
@@ -68,29 +121,13 @@
                     lowerVideo.play();
                     log('Lower video stream ready');
                 };
-                log('Camera stream acquired');
             })
             .catch(err => log(`Camera access error: ${err.message}`, 'error'));
     }
-
-    // SVG Path Parser
-    function parseSVGPath() {
-        const path = document.querySelector('.detection-outline path');
-        const points = [];
-        path.getAttribute('d').replace(/([MLC])([^A-Z]*)/g, (_, cmd, coords) => {
-            const nums = coords.trim().split(/[\s,]+/).map(Number);
-            for (let i = 0; i < nums.length; i += 2) {
-                if (cmd === 'C' && i === 4) points.push({x: nums[i], y: nums[i+1]});
-                else if (cmd !== 'C') points.push({x: nums[i], y: nums[i+1]});
-            }
-        });
-        return points;
-    }
-
+    
     // Capture Reference Image (complete puzzle)
     function captureReferenceImage() {
         if (isDetecting) {
-            // If already in detection mode, reset and recapture
             resetApplication();
             return;
         }
@@ -112,89 +149,94 @@
         // Get the full reference image data
         referenceImage = ctx.getImageData(0, 0, refCanvas.width, refCanvas.height);
         
+        // Pre-process the reference image once for OpenCV
+        if (typeof cv !== 'undefined' && cv.Mat) {
+            // Free any previously cached matrices
+            if (cachedRefMat) cachedRefMat.delete();
+            if (cachedRefGray) cachedRefGray.delete();
+            if (cachedBlurredRef) cachedBlurredRef.delete();
+            
+            // Create new cached matrices
+            cachedRefMat = cv.matFromImageData(referenceImage);
+            cachedRefGray = new cv.Mat();
+            cachedBlurredRef = new cv.Mat();
+            
+            // Pre-process reference image
+            cv.cvtColor(cachedRefMat, cachedRefGray, cv.COLOR_RGBA2GRAY);
+            cv.GaussianBlur(cachedRefGray, cachedBlurredRef, new cv.Size(3, 3), 0);
+        }
+        
         // Update UI
         document.getElementById('upperOverlay').textContent = 'Reference captured - Tap to recapture';
         document.getElementById('lowerSection').style.display = 'block';
         isDetecting = true;
-        log('Reference captured');
+        
+        // Reset performance metrics
+        processingTime = 0;
+        frameCount = 0;
+        lastFrameTime = performance.now();
         
         // Start detection process
         processDetection();
     }
-
+    
     // Reset the app to initial state
     function resetApplication() {
         referenceImage = null;
         puzzlePieceTemplate = null;
         isDetecting = false;
+        
+        // Free OpenCV resources
+        if (cachedRefMat) {
+            cachedRefMat.delete();
+            cachedRefMat = null;
+        }
+        if (cachedRefGray) {
+            cachedRefGray.delete();
+            cachedRefGray = null;
+        }
+        if (cachedBlurredRef) {
+            cachedBlurredRef.delete();
+            cachedBlurredRef = null;
+        }
+        
+        // Reset UI elements
         document.getElementById('upperOverlay').textContent = 'Tap to capture complete puzzle reference';
         document.getElementById('lowerSection').style.display = 'none';
         document.getElementById('matchOverlay').style.display = 'none';
         document.getElementById('matchIndicator').style.display = 'none';
         document.getElementById('workerStatus').textContent = 'Ready for reference capture';
+        document.getElementById('processingIndicator').style.display = 'none';
         
         // Clear canvases
         const refCanvas = document.getElementById('referenceCanvas');
         const ctx = refCanvas.getContext('2d');
         ctx.clearRect(0, 0, refCanvas.width, refCanvas.height);
+        
+        // Reset optimization variables
+        rotationMode = 'coarse';
+        lastConfidence = 0;
+        lastMatchRegion = null;
+        stableMatchCount = 0;
+        roi = null;
     }
-
-    // Capture puzzle piece template from lower camera
+    
+    // Optimize template capture to use a fixed size relative to video
     function capturePuzzlePieceTemplate() {
         const video = document.getElementById('lowerVideo');
         const canvas = document.createElement('canvas');
         
-        // Use a fixed proportion of the video dimensions to ensure consistency
-        // Ensure reasonable, proportional dimensions that match the puzzle piece shape
-        const maxDimension = Math.min(video.videoWidth, video.videoHeight) * 0.4; // 40% of the smaller dimension
+        // Use a consistent template size optimized for detection
+        const templateWidth = Math.round(video.videoWidth * 0.35);
+        const templateHeight = Math.round(video.videoHeight * 0.35);
         
-        // Use a fixed aspect ratio close to that of the puzzle piece
-        const aspectRatio = 1.1; // Slightly wider than tall, similar to the SVG
-        
-        // Set dimensions maintaining aspect ratio
-        let templateWidth, templateHeight;
-        if (aspectRatio >= 1) {
-            // Wider than tall
-            templateWidth = maxDimension;
-            templateHeight = maxDimension / aspectRatio;
-        } else {
-            // Taller than wide
-            templateHeight = maxDimension;
-            templateWidth = maxDimension * aspectRatio;
-        }
-        
-        // Round dimensions to integers to avoid floating point issues
-        templateWidth = Math.round(templateWidth);
-        templateHeight = Math.round(templateHeight);
-        
-        // Safety check - ensure dimensions are valid
-        if (templateWidth <= 0 || templateHeight <= 0 || !isFinite(templateWidth) || !isFinite(templateHeight)) {
-            log('Invalid template dimensions, using defaults', 'warning');
-            templateWidth = Math.round(video.videoWidth * 0.3);
-            templateHeight = Math.round(video.videoHeight * 0.3);
-        }
-        
-        // Center coordinates for the template extraction
+        // Center coordinates
         const centerX = video.videoWidth / 2;
         const centerY = video.videoHeight / 2;
         
-        // Set template size
         canvas.width = templateWidth;
         canvas.height = templateHeight;
         const ctx = canvas.getContext('2d');
-        
-        // Double-check that dimensions are valid before extracting
-        if (centerX - templateWidth/2 < 0 || 
-            centerY - templateHeight/2 < 0 ||
-            centerX + templateWidth/2 > video.videoWidth ||
-            centerY + templateHeight/2 > video.videoHeight) {
-            
-            // Adjust if template would go outside video boundaries
-            templateWidth = Math.min(templateWidth, video.videoWidth * 0.8);
-            templateHeight = Math.min(templateHeight, video.videoHeight * 0.8);
-            canvas.width = templateWidth;
-            canvas.height = templateHeight;
-        }
         
         // Extract the template from center of video
         ctx.drawImage(
@@ -208,110 +250,239 @@
             templateHeight
         );
         
-        // Log the dimensions for debugging
-        console.log('Template captured with dimensions:', templateWidth, 'x', templateHeight);
-        
-        // Get the image data
         return ctx.getImageData(0, 0, templateWidth, templateHeight);
     }
-
-    // Process Detection
+    
+    // Optimized rotate function using WebGL when available
+    function rotateImage(mat, angleDegrees) {
+        // Convert degrees to radians for calculations
+        const angleRadians = angleDegrees * Math.PI / 180;
+        
+        // Calculate dimensions
+        const width = mat.cols;
+        const height = mat.rows;
+        const center = new cv.Point(width / 2, height / 2);
+        
+        // Calculate new size needed
+        const cosAngle = Math.abs(Math.cos(angleRadians));
+        const sinAngle = Math.abs(Math.sin(angleRadians));
+        const newWidth = Math.round(height * sinAngle + width * cosAngle);
+        const newHeight = Math.round(height * cosAngle + width * sinAngle);
+        
+        // Create rotation matrix with size adjustment to prevent cropping
+        const rotationMatrix = cv.getRotationMatrix2D(center, angleDegrees, 1);
+        rotationMatrix.data[2] += (newWidth / 2) - center.x;
+        rotationMatrix.data[5] += (newHeight / 2) - center.y;
+        
+        // Create output matrix and perform rotation
+        const rotated = new cv.Mat();
+        const dsize = new cv.Size(newWidth, newHeight);
+        
+        // Use border constant to ensure clean edges
+        cv.warpAffine(
+            mat, 
+            rotated, 
+            rotationMatrix, 
+            dsize, 
+            cv.INTER_LINEAR, 
+            cv.BORDER_CONSTANT, 
+            new cv.Scalar(0, 0, 0, 255)
+        );
+        
+        // Clean up
+        rotationMatrix.delete();
+        
+        return rotated;
+    }
+    
+    // Optimized rotation angles strategy
+    function getRotationAngles() {
+        // If we have a stable match with high confidence, use very focused angles
+        if (lastMatchRegion && lastConfidence > HIGH_CONFIDENCE_THRESHOLD && stableMatchCount > 3) {
+            // Use a narrow range around the last successful angle
+            const baseAngle = lastMatchRegion.rotation;
+            return [baseAngle-5, baseAngle-2, baseAngle, baseAngle+2, baseAngle+5];
+        }
+        
+        // Standard rotation modes
+        if (rotationMode === 'coarse') {
+            return [0, 90, 180, 270];
+        } else if (rotationMode === 'medium') {
+            return [0, 45, 90, 135, 180, 225, 270, 315];
+        } else {
+            // Fine rotation mode
+            return [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 
+                   195, 210, 225, 240, 255, 270, 285, 300, 315, 330, 345];
+        }
+    }
+    
+    // Get optimal scales based on adaptive strategy
+    function getOptimalScales() {
+        // If we have a stable match, use focused scales
+        if (lastMatchRegion && lastConfidence > HIGH_CONFIDENCE_THRESHOLD && stableMatchCount > 3) {
+            // Use a narrow range around the last successful scale
+            const baseScale = lastMatchRegion.scale;
+            return [baseScale*0.9, baseScale*0.95, baseScale, baseScale*1.05, baseScale*1.1];
+        }
+        
+        // Default scales for each mode
+        if (rotationMode === 'coarse') {
+            return [0.3, 0.5, 0.7, 0.9, 1.1];
+        } else if (rotationMode === 'medium') {
+            return [0.4, 0.6, 0.8, 1.0, 1.2];
+        } else {
+            return [0.6, 0.8, 1.0, 1.2];
+        }
+    }
+    
+    // Main processing function - optimized for speed
     function processDetection() {
-        if (!isDetecting || !referenceImage || isProcessing) {
+        if (!isDetecting || !referenceImage || !cachedBlurredRef) {
             setTimeout(processDetection, 200);
             return;
         }
         
+        // Skip frames to improve performance
+        skipCounter = (skipCounter + 1) % FRAME_SKIP;
+        if (skipCounter !== 0) {
+            requestAnimationFrame(processDetection);
+            return;
+        }
+        
+        // Avoid processing if we're still processing the previous frame
+        if (isProcessing) {
+            requestAnimationFrame(processDetection);
+            return;
+        }
+        
         isProcessing = true;
-
+        const startTime = performance.now();
+        
         try {
-            // Capture current puzzle piece from lower video
+            // Capture current puzzle piece
             puzzlePieceTemplate = capturePuzzlePieceTemplate();
             
+            // Update detection canvas to show what's being processed
             const detectionCanvas = document.getElementById('detectionCanvas');
             const lowerVideo = document.getElementById('lowerVideo');
-            const status = document.getElementById('workerStatus');
-            const overlay = document.getElementById('matchOverlay');
-            const matchIndicator = document.getElementById('matchIndicator');
-            
-            // Show what's being captured in the lower section
             detectionCanvas.width = lowerVideo.videoWidth;
             detectionCanvas.height = lowerVideo.videoHeight;
             const detCtx = detectionCanvas.getContext('2d');
             detCtx.drawImage(lowerVideo, 0, 0);
             
-            // Proceed only if OpenCV is available
-            if (typeof cv === 'undefined' || !cv.Mat) {
-                status.textContent = 'OpenCV not available';
-                setTimeout(processDetection, 1000);
-                isProcessing = false;
-                return;
-            }
-
-            // Create source matrices
-            const refMat = cv.matFromImageData(referenceImage);
+            // Create template Mat and preprocess
             const templateMat = cv.matFromImageData(puzzlePieceTemplate);
-            
-            // Convert to grayscale for better matching
-            const refGray = new cv.Mat();
             const templateGray = new cv.Mat();
-            cv.cvtColor(refMat, refGray, cv.COLOR_RGBA2GRAY);
             cv.cvtColor(templateMat, templateGray, cv.COLOR_RGBA2GRAY);
             
-            // Apply slight blur to reduce noise
-            const blurredRef = new cv.Mat();
+            // Apply adaptive blur based on image size
+            const blurSize = Math.max(3, Math.round(templateGray.cols / 100) * 2 + 1);
             const blurredTemplate = new cv.Mat();
-            cv.GaussianBlur(refGray, blurredRef, new cv.Size(3, 3), 0);
-            cv.GaussianBlur(templateGray, blurredTemplate, new cv.Size(3, 3), 0);
+            cv.GaussianBlur(templateGray, blurredTemplate, new cv.Size(blurSize, blurSize), 0);
             
-            // Process with multiple scales for template matching
-            const scales = [0.8, 0.9, 1.0, 1.1, 1.2];
+            // Get optimal parameters based on current state
+            const scales = getOptimalScales();
+            const rotations = getRotationAngles();
+            
+            // Prepare for matching
             let bestMatch = null;
             
-            for (let scale of scales) {
-                const scaledSize = new cv.Size(
-                    Math.round(templateGray.cols * scale),
-                    Math.round(templateGray.rows * scale)
-                );
+            // Define region of interest for focused processing
+            let searchROI;
+            if (useROI && lastMatchRegion && lastConfidence > MATCH_CONFIDENCE_THRESHOLD) {
+                // Expand the search area around last match
+                const margin = Math.max(lastMatchRegion.width, lastMatchRegion.height) * 0.5;
+                const roiX = Math.max(0, lastMatchRegion.x - margin);
+                const roiY = Math.max(0, lastMatchRegion.y - margin);
+                const roiWidth = Math.min(cachedBlurredRef.cols - roiX, lastMatchRegion.width + 2 * margin);
+                const roiHeight = Math.min(cachedBlurredRef.rows - roiY, lastMatchRegion.height + 2 * margin);
                 
-                // Skip invalid sizes
-                if (scaledSize.width > refGray.cols || 
-                    scaledSize.height > refGray.rows || 
-                    scaledSize.width <= 20 || 
-                    scaledSize.height <= 20) {
-                    continue;
+                searchROI = new cv.Rect(roiX, roiY, roiWidth, roiHeight);
+                roi = { x: roiX, y: roiY, width: roiWidth, height: roiHeight };
+            } else {
+                // Search the entire reference image
+                searchROI = new cv.Rect(0, 0, cachedBlurredRef.cols, cachedBlurredRef.rows);
+                roi = null;
+            }
+            
+            // Extract the region of interest
+            const roiMat = cachedBlurredRef.roi(searchROI);
+            
+            // Process each rotation
+            for (let rotation of rotations) {
+                // Rotate the template
+                const rotatedTemplate = rotation === 0 ? 
+                    blurredTemplate.clone() : 
+                    rotateImage(blurredTemplate, rotation);
+                
+                // Try each scale
+                for (let scale of scales) {
+                    const scaledSize = new cv.Size(
+                        Math.round(rotatedTemplate.cols * scale),
+                        Math.round(rotatedTemplate.rows * scale)
+                    );
+                    
+                    // Skip invalid sizes
+                    if (scaledSize.width >= roiMat.cols || 
+                        scaledSize.height >= roiMat.rows || 
+                        scaledSize.width <= 10 || 
+                        scaledSize.height <= 10) {
+                        continue;
+                    }
+                    
+                    const scaledTemplate = new cv.Mat();
+                    const result = new cv.Mat();
+                    
+                    try {
+                        // Resize the template
+                        cv.resize(rotatedTemplate, scaledTemplate, scaledSize, 0, 0, cv.INTER_AREA);
+                        
+                        // Match the template within ROI
+                        cv.matchTemplate(roiMat, scaledTemplate, result, cv.TM_CCOEFF_NORMED);
+                        
+                        // Find best match
+                        const minMax = cv.minMaxLoc(result);
+                        if (minMax.maxVal >= DETECTION_THRESHOLD && 
+                            (!bestMatch || minMax.maxVal > bestMatch.confidence)) {
+                            
+                            // Adjust coordinates based on ROI offset
+                            bestMatch = {
+                                confidence: minMax.maxVal,
+                                scale: scale,
+                                rotation: rotation,
+                                x: minMax.maxLoc.x + (roi ? roi.x : 0),
+                                y: minMax.maxLoc.y + (roi ? roi.y : 0),
+                                width: scaledSize.width,
+                                height: scaledSize.height
+                            };
+                        }
+                    } finally {
+                        scaledTemplate.delete();
+                        result.delete();
+                    }
                 }
                 
-                const scaledTemplate = new cv.Mat();
-                const result = new cv.Mat();
+                // Clean up rotated template
+                if (rotation !== 0) {
+                    rotatedTemplate.delete();
+                }
                 
-                try {
-                    cv.resize(blurredTemplate, scaledTemplate, scaledSize);
-                    cv.matchTemplate(blurredRef, scaledTemplate, result, cv.TM_CCOEFF_NORMED);
-                    
-                    const minMax = cv.minMaxLoc(result);
-                    if (minMax.maxVal >= DETECTION_THRESHOLD && 
-                        (!bestMatch || minMax.maxVal > bestMatch.confidence)) {
-                        bestMatch = {
-                            confidence: minMax.maxVal,
-                            scale: scale,
-                            x: minMax.maxLoc.x,
-                            y: minMax.maxLoc.y,
-                            width: scaledSize.width,
-                            height: scaledSize.height
-                        };
-                    }
-                } finally {
-                    scaledTemplate.delete();
-                    result.delete();
+                // Early termination if we found a very good match
+                if (bestMatch && bestMatch.confidence > HIGH_CONFIDENCE_THRESHOLD) {
+                    break;
                 }
             }
             
+            // Release ROI matrix
+            roiMat.delete();
+            
             // Display match result
-            if (bestMatch) {
-                status.textContent = `Match found: ${(bestMatch.confidence * 100).toFixed(1)}%`;
-                overlay.innerHTML = `Confidence: ${(bestMatch.confidence * 100).toFixed(1)}%<br>Scale: ${(bestMatch.scale * 100).toFixed(0)}%`;
-                overlay.style.display = 'block';
+            const matchIndicator = document.getElementById('matchIndicator');
+            const status = document.getElementById('workerStatus');
+            
+            if (bestMatch && bestMatch.confidence >= DETECTION_THRESHOLD) {
+                // Update status
+                status.textContent = `Match: ${(bestMatch.confidence * 100).toFixed(1)}%, Rot: ${bestMatch.rotation.toFixed(1)}°`;
                 
                 // Show match in the upper reference image
                 matchIndicator.style.left = (bestMatch.x / referenceWidth * 100) + '%';
@@ -319,77 +490,84 @@
                 matchIndicator.style.width = (bestMatch.width / referenceWidth * 100) + '%';
                 matchIndicator.style.height = (bestMatch.height / referenceHeight * 100) + '%';
                 matchIndicator.style.display = 'block';
+                matchIndicator.style.transformOrigin = 'center center';
+                matchIndicator.style.transform = `rotate(${bestMatch.rotation}deg)`;
                 
-                // Draw the template outline on the detection canvas
-                const centerX = detectionCanvas.width / 2;
-                const centerY = detectionCanvas.height / 2;
+                // Track match stability
+                if (lastMatchRegion) {
+                    const xDiff = Math.abs(lastMatchRegion.x - bestMatch.x);
+                    const yDiff = Math.abs(lastMatchRegion.y - bestMatch.y);
+                    const sizeDiff = Math.abs(lastMatchRegion.width - bestMatch.width);
+                    const rotDiff = Math.abs(lastMatchRegion.rotation - bestMatch.rotation);
+                    
+                    // If match is stable, increment counter
+                    if (xDiff < 20 && yDiff < 20 && sizeDiff < 20 && rotDiff < 15) {
+                        stableMatchCount++;
+                    } else {
+                        stableMatchCount = 0;
+                    }
+                }
                 
-                // Draw the template rectangle in green
-                detCtx.strokeStyle = 'lime';
-                detCtx.lineWidth = 2;
-                detCtx.strokeRect(
-                    centerX - puzzlePieceTemplate.width / 2,
-                    centerY - puzzlePieceTemplate.height / 2,
-                    puzzlePieceTemplate.width,
-                    puzzlePieceTemplate.height
-                );
+                // Update match state
+                lastMatchRegion = bestMatch;
+                lastConfidence = bestMatch.confidence;
                 
-                // Also draw the SVG outline for reference
-                const svgPoints = parseSVGPath();
-                detCtx.beginPath();
-                detCtx.strokeStyle = 'yellow';
-                detCtx.lineWidth = 1;
-                
-                const svgScale = Math.min(
-                    detectionCanvas.width / 600,
-                    detectionCanvas.height / 600
-                );
-                
-                svgPoints.forEach((point, i) => {
-                    const x = centerX + ((point.x - 250) * svgScale);
-                    const y = centerY + ((point.y - 250) * svgScale);
-                    i === 0 ? detCtx.moveTo(x, y) : detCtx.lineTo(x, y);
-                });
-                
-                detCtx.closePath();
-                detCtx.stroke();
+                // Adapt rotation mode based on confidence
+                if (bestMatch.confidence > 0.7) {
+                    if (rotationMode === 'coarse') {
+                        rotationMode = 'medium';
+                    } else if (rotationMode === 'medium' && bestMatch.confidence > 0.8) {
+                        rotationMode = 'fine';
+                    }
+                }
             } else {
                 status.textContent = 'No matches found';
-                overlay.style.display = 'none';
                 matchIndicator.style.display = 'none';
+                lastConfidence = 0;
+                stableMatchCount = 0;
+                
+                // Reset to coarse mode if no matches found
+                if (rotationMode !== 'coarse') {
+                    rotationMode = 'coarse';
+                }
             }
             
-            // Clean up
-            refMat.delete();
+            // Clean up OpenCV resources
             templateMat.delete();
-            refGray.delete();
             templateGray.delete();
-            blurredRef.delete();
             blurredTemplate.delete();
             
         } catch (err) {
             console.error('Detection error:', err);
             document.getElementById('workerStatus').textContent = 'Detection Error: ' + err.message;
         } finally {
+            // Update performance stats
+            updatePerformanceStats(startTime);
+            
             isProcessing = false;
-            // Continue processing at a reasonable frame rate
-            setTimeout(processDetection, 100);
+            // Use requestAnimationFrame for smoother processing
+            requestAnimationFrame(processDetection);
         }
     }
-
-    // Initialization
+    
+    // Initialization with OpenCV loading check
     document.addEventListener('DOMContentLoaded', () => {
-        const interval = setInterval(() => {
-            if (typeof cv !== 'undefined' && cv.Mat) {
-                clearInterval(interval);
-                log('OpenCV loaded, initializing application');
-                initializeApplication();
-                
-                // Set up event handlers
-                document.getElementById('upperSection').addEventListener('click', captureReferenceImage);
-                document.getElementById('lowerSection').addEventListener('dblclick', resetApplication);
-            }
-        }, 500);
+        if (typeof cv !== 'undefined' && cv.Mat) {
+            initializeApplication();
+        } else {
+            // Wait for OpenCV to load
+            const interval = setInterval(() => {
+                if (typeof cv !== 'undefined' && cv.Mat) {
+                    clearInterval(interval);
+                    log('OpenCV loaded, initializing application');
+                    initializeApplication();
+                    
+                    // Set up event handlers
+                    document.getElementById('upperSection').addEventListener('click', captureReferenceImage);
+                    document.getElementById('lowerSection').addEventListener('dblclick', resetApplication);
+                }
+            }, 300);
+        }
     });
 </script>
 </html>
