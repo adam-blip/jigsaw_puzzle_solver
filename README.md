@@ -1,75 +1,111 @@
-# Jigsaw Puzzle Solver Web App
+# Puzzle Detector Pro
 
-[![Live Demo](https://img.shields.io/badge/demo-live-green.svg)](https://htmlpreview.github.io/?https://github.com/adam-blip/jigsaw_puzzle_solver/blob/main/index.html)
+A web-based application that uses computer vision to help find where puzzle pieces fit in the completed puzzle image.
 
-A browser-based solution that helps assemble jigsaw puzzles using computer vision techniques and pattern matching.
+![Puzzle Detector Pro Screenshot](https://via.placeholder.com/800x400?text=Puzzle+Detector+Pro)
 
-## Key Features
-- 📸 **Camera Integration** - Uses device camera to capture puzzle pieces
-- 🔄 **Rotation Detection** - Identifies piece orientation (0°, 90°, 180°, 270°)
-- 🎯 **Position Tracking** - Locates piece position in reference image
-- 📊 **Confidence Scoring** - Calculates match probability in percentage
-- 🖥️ **Visual Overlay** - Displays potential matches with color-coded confidence
+## 🧩 Overview
 
-## Live Demo
-Test the solver directly in your browser:  
-[Jigsaw Puzzle Solver Demo](https://htmlpreview.github.io/?https://github.com/adam-blip/jigsaw_puzzle_solver/blob/main/index.html)
+Puzzle Detector Pro is a standalone web application that uses your device's camera to detect where individual puzzle pieces belong in a completed puzzle. It employs template matching algorithms through OpenCV.js to identify the exact location of puzzle pieces in real-time.
 
-## Usage
-1. **Capture Reference Image**
-   - Position complete puzzle in camera view
-   - Click "Capture Reference Puzzle"
-   
-2. **Detect Puzzle Piece**
-   - Show individual piece to camera
-   - Click "Detect Piece Position"
-   
-3. **Review Results**
-   - See position coordinates
-   - View confidence percentage
-   - Check detected rotation angle
+## ✨ Features
 
-## Features
-- Pure JavaScript implementation
-- Real-time image processing
-- Mobile-responsive interface
-- Visual feedback system
-- Performance optimizations
+- **Dual Camera View**: Capture the reference puzzle image in the upper view and detect individual pieces in the lower view
+- **Real-time Processing**: Instant feedback on where pieces belong
+- **Visual Feedback**: Highlights matched areas with confidence percentages
+- **Multi-scale Detection**: Works with different sized puzzle pieces through scale-invariant matching
+- **Mobile-Friendly**: Optimized for use on smartphones and tablets
+- **No Server Required**: Runs entirely in the browser with no data sent to any server
 
-## Prompt used for AI Coding Assistants
+## 🚀 Getting Started
 
-Logo and Favicon:
-a single rainbow-colored jigsaw piece on a white background with a magnifying glass in front, comic style
+### Prerequisites
 
-Web App:
-I need a web application that can detect puzzle pieces using a device's camera. Favicon is already there. The application interface is split into two halves: an upper half for reference image management and a lower half for live puzzle piece detection.
+- A modern web browser with JavaScript enabled
+- Camera access on your device
+- For best results, use good lighting conditions
 
-Upper Half (Reference Image):
+### Installation
 
-Initially, it should display a live camera preview with a transparent grey text overlay saying "Tap to capture reference".
-When the user taps in the upper half:
-Capture a square-cropped image from the center of the upper camera preview. This becomes the "reference image".
-Display the captured reference image in the upper half, replacing the live preview.
-Change the text overlay to "Tap to retake reference", still in transparent grey.
-Tapping the upper half again should recapture the reference image, repeating the above process.
-Lower Half (Detection):
+1. Clone this repository:
+   ```
+   git clone https://github.com/yourusername/puzzle-detector-pro.git
+   ```
 
-After a reference image is captured, the live camera preview should move to the lower half.
-The lower half should also display a transparent jigsaw puzzle piece outline overlaid on the live camera preview, indicating the detection zone.
-Continuously analyze the live camera feed in the lower half to detect puzzle pieces that resemble a portion of the reference image.
-When a puzzle piece is detected with a confidence level above a threshold (e.g., 80%):
-Visually mark the location of the detected puzzle piece on the reference image in the upper half with a flashing green rectangle.
-Display the confidence percentage within the green rectangle on the reference image.
-Crop out the detected puzzle piece area from the lower camera preview.
-Visual Details:
+2. Navigate to the project directory:
+   ```
+   cd puzzle-detector-pro
+   ```
 
-Use a transparent grey color for all text overlays.
-Use a jigsaw puzzle piece outline image for the detection zone in the lower half.
-Use a flashing green rectangle and a confidence percentage label to mark detected pieces on the reference image.
-Technical Aspects (Desired Enhancements - if applicable to the other chatbot's capabilities):
+3. Open `index.html` in a web server. 
+   - For local development, you can use:
+     ```
+     npx http-server .
+     ```
+   - Or with Python:
+     ```
+     python -m http.server
+     ```
 
-Incorporate methods to automatically detect and crop a square or rectangular area for the reference image instead of a fixed center crop.
-Consider adding skew correction to better align and compare the reference and detected pieces.
-If possible, explore using WebAssembly to improve performance, especially for image processing and comparison.
-Optimize for speed and responsiveness in continuous puzzle piece detection.
-Can you help me create the HTML, CSS, and JavaScript code for this web application?
+4. Access through your browser (usually at http://localhost:8080)
+
+## 📱 How to Use
+
+1. **Capture Reference Image**:
+   - Place your completed puzzle (or box image) in view of the camera
+   - Tap the upper section to capture the reference image
+
+2. **Detect Puzzle Pieces**:
+   - Once the reference is captured, the lower section activates
+   - Position individual puzzle pieces within the green outline
+   - The app will show where in the reference image your piece belongs
+   - Confidence percentage indicates how certain the match is
+
+3. **Reset**:
+   - Double-tap the lower section or tap the upper section to reset and recapture the reference
+
+## 🔧 Technical Details
+
+- **OpenCV.js**: Used for computer vision and template matching algorithms
+- **JavaScript ES6**: Core application logic
+- **HTML5 Canvas**: Real-time image processing and visualization
+- **MediaDevices API**: Camera access and video streams
+
+### Algorithm Overview
+
+The application uses the following techniques:
+- Grayscale conversion for better pattern matching
+- Gaussian blur to reduce noise
+- Template matching with normalized cross-correlation (TM_CCOEFF_NORMED)
+- Multi-scale detection to account for different sized puzzle pieces
+- SVG path parsing for visualizing the puzzle piece outline
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the project
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 🔮 Future Enhancements
+
+- Edge detection for better puzzle piece recognition
+- Support for saving reference images between sessions
+- Custom SVG outlines for different puzzle piece shapes
+- Improved performance optimizations for lower-end devices
+- Puzzle piece rotation detection
+
+## 📞 Contact
+
+If you have any questions or suggestions, please open an issue in this repository.
+
+---
+
+Made with ❤️ for puzzle enthusiasts everywhere
